@@ -166,7 +166,6 @@ unsigned long long CustomBagOfCells::Info::read_int(const unsigned char* ptr, un
   }
   return res;
 }
-
 void CustomBagOfCells::Info::write_int(unsigned char* ptr, unsigned long long value, int bytes) {
   ptr += bytes;
   while (bytes) {
@@ -412,7 +411,6 @@ unsigned long long CustomBagOfCells::get_idx_entry_raw(int index) {
     return 0;
   }
 }
-
 bool CustomBagOfCells::get_cache_entry(int index) {
   if (!info.has_cache_bits) {
     return true;
@@ -423,7 +421,6 @@ bool CustomBagOfCells::get_cache_entry(int index) {
   auto raw = get_idx_entry_raw(index);
   return raw % 2 == 1;
 }
-
 unsigned long long CustomBagOfCells::get_idx_entry(int index) {
   auto raw = get_idx_entry_raw(index);
   if (info.has_cache_bits) {
@@ -606,7 +603,6 @@ td::Result<td::BufferSlice> custom_boc_serialize(Ref<Cell> root, int mode) {
   auto custom_boc = *reinterpret_cast<CustomBagOfCells*>(&boc);
   return custom_boc.serialize_to_slice(mode);
 }
-
 td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty = false, bool allow_nonzero_level = false) {
   if (data.empty() && can_be_empty) {
     return Ref<Cell>();
