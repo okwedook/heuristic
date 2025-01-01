@@ -44,8 +44,9 @@ for i, test_file in enumerate(test_files):
           end="   ")
 
     try:
-        result = subprocess.run("./solution", input="compress\n" + original_block, text=True, capture_output=True,
-                                timeout=2.0)
+        result = subprocess.run("./solution", input="compress\n" + original_block, text=True,
+                                timeout=2.0, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        encode_stderr = result.stderr
     except subprocess.TimeoutExpired:
         print(f"{Fore.RED}TL timeout expired{Style.RESET_ALL}")
         continue
@@ -63,8 +64,9 @@ for i, test_file in enumerate(test_files):
     print(f"{Fore.GREEN}OK {Fore.CYAN}{compressed_size:>7}{Style.RESET_ALL}", end="    ")
 
     try:
-        result = subprocess.run("./solution", input="decompress\n" + compressed_block, text=True, capture_output=True,
-                                timeout=2.0)
+        result = subprocess.run("./solution", input="decompress\n" + compressed_block, text=True,
+                                timeout=2.0, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        decode_stderr = result.stderr
     except subprocess.TimeoutExpired:
         print(f"{Fore.RED}TL timeout expired{Style.RESET_ALL}")
         continue
@@ -80,6 +82,9 @@ for i, test_file in enumerate(test_files):
     print(f"{Fore.GREEN}OK{Style.RESET_ALL} {Fore.CYAN}{points:9.3f}{Fore.CYAN}")
     n_ok += 1
     total_points += points
+
+    print("Encode stderr:", encode_stderr)
+    print("Decode stderr:", decode_stderr)
 
 if n_ok == n_tests:
     passed_color = Fore.GREEN
