@@ -12,6 +12,7 @@
 #include "vm/boc.h"
 #include "block/block-auto.h"
 #include "crypto/vm/boc-writers.h"
+#include "tdutils/td/utils/misc.h"
 
 namespace vm {
 class CustomBagOfCells {
@@ -157,6 +158,127 @@ class CustomBagOfCells {
                                                      std::vector<td::uint8>* cell_should_cache);
 };
 
+unsigned long long CustomBagOfCells::Info::read_int(const unsigned char* ptr, unsigned bytes) {
+  unsigned long long res = 0;
+  while (bytes > 0) {
+    res = (res << 8) + *ptr++;
+    --bytes;
+  }
+  return res;
+}
+
+void CustomBagOfCells::Info::write_int(unsigned char* ptr, unsigned long long value, int bytes) {
+  ptr += bytes;
+  while (bytes) {
+    *--ptr = value & 0xff;
+    value >>= 8;
+    --bytes;
+  }
+  DCHECK(!bytes);
+}
+
+long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice) {
+  invalidate();
+  int sz = static_cast<int>(std::min(slice.size(), static_cast<std::size_t>(0xffff)));
+  if (sz < 4) {
+    return -10;  // want at least 10 bytes
+  }
+  const unsigned char* ptr = slice.ubegin();
+  magic = (unsigned)read_int(ptr, 4);
+  has_crc32c = false;
+  has_index = false;
+  has_cache_bits = false;
+  ref_byte_size = 0;
+  offset_byte_size = 0;
+  root_count = cell_count = absent_count = -1;
+  index_offset = data_offset = data_size = total_size = 0;
+  if (magic != boc_generic && magic != boc_idx && magic != boc_idx_crc32c) {
+    magic = 0;
+    return 0;
+  }
+  if (sz < 5) {
+    return -10;
+  }
+  td::uint8 byte = ptr[4];
+  if (magic == boc_generic) {
+    has_index = (byte >> 7) % 2 == 1;
+    has_crc32c = (byte >> 6) % 2 == 1;
+    has_cache_bits = (byte >> 5) % 2 == 1;
+  } else {
+    has_index = true;
+    has_crc32c = magic == boc_idx_crc32c;
+  }
+  if (has_cache_bits && !has_index) {
+    return 0;
+  }
+  ref_byte_size = byte & 7;
+  if (ref_byte_size > 4 || ref_byte_size < 1) {
+    return 0;
+  }
+  if (sz < 6) {
+    return -7 - 3 * ref_byte_size;
+  }
+  offset_byte_size = ptr[5];
+  if (offset_byte_size > 8 || offset_byte_size < 1) {
+    return 0;
+  }
+  roots_offset = 6 + 3 * ref_byte_size + offset_byte_size;
+  ptr += 6;
+  sz -= 6;
+  if (sz < ref_byte_size) {
+    return -static_cast<int>(roots_offset);
+  }
+  cell_count = (int)read_ref(ptr);
+  if (cell_count <= 0) {
+    cell_count = -1;
+    return 0;
+  }
+  if (sz < 2 * ref_byte_size) {
+    return -static_cast<int>(roots_offset);
+  }
+  root_count = (int)read_ref(ptr + ref_byte_size);
+  if (root_count <= 0) {
+    root_count = -1;
+    return 0;
+  }
+  index_offset = roots_offset;
+  if (magic == boc_generic) {
+    index_offset += (long long)root_count * ref_byte_size;
+    has_roots = true;
+  } else {
+    if (root_count != 1) {
+      return 0;
+    }
+  }
+  data_offset = index_offset;
+  if (has_index) {
+    data_offset += (long long)cell_count * offset_byte_size;
+  }
+  if (sz < 3 * ref_byte_size) {
+    return -static_cast<int>(roots_offset);
+  }
+  absent_count = (int)read_ref(ptr + 2 * ref_byte_size);
+  if (absent_count < 0 || absent_count > cell_count) {
+    return 0;
+  }
+  if (sz < 3 * ref_byte_size + offset_byte_size) {
+    return -static_cast<int>(roots_offset);
+  }
+  data_size = read_offset(ptr + 3 * ref_byte_size);
+  if (data_size > ((unsigned long long)cell_count << 10)) {
+    return 0;
+  }
+  if (data_size > (1ull << 40)) {
+    return 0;  // bag of cells with more than 1TiB data is unlikely
+  }
+  if (data_size < cell_count * (2ull + ref_byte_size) - ref_byte_size) {
+    return 0;  // invalid header, too many cells for this amount of data bytes
+  }
+  valid = true;
+  total_size = data_offset + data_size + (has_crc32c ? 4 : 0);
+  return total_size;
+}
+
 //serialized_boc#672fb0ac has_idx:(## 1) has_crc32c:(## 1)
 //  has_cache_bits:(## 1) flags:(## 2) { flags = 0 }
 //  size:(## 3) { size <= 4 }
@@ -277,6 +399,200 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice(int mode) {
   }
 }
 
+unsigned long long CustomBagOfCells::get_idx_entry_raw(int index) {
+  if (index < 0) {
+    return 0;
+  }
+  if (!info.has_index) {
+    return custom_index.at(index);
+  } else if (index < info.cell_count && index_ptr) {
+    return info.read_offset(index_ptr + (long)index * info.offset_byte_size);
+  } else {
+    // throw ?
+    return 0;
+  }
+}
+
+bool CustomBagOfCells::get_cache_entry(int index) {
+  if (!info.has_cache_bits) {
+    return true;
+  }
+  if (!info.has_index) {
+    return true;
+  }
+  auto raw = get_idx_entry_raw(index);
+  return raw % 2 == 1;
+}
+
+unsigned long long CustomBagOfCells::get_idx_entry(int index) {
+  auto raw = get_idx_entry_raw(index);
+  if (info.has_cache_bits) {
+    raw /= 2;
+  }
+  return raw;
+}
+
+td::Result<td::Slice> CustomBagOfCells::get_cell_slice(int idx, td::Slice data) {
+  unsigned long long offs = get_idx_entry(idx - 1);
+  unsigned long long offs_end = get_idx_entry(idx);
+  if (offs > offs_end || offs_end > data.size()) {
+    return td::Status::Error(PSLICE() << "invalid index entry [" << offs << "; " << offs_end << "], "
+                                      << td::tag("data.size()", data.size()));
+  }
+  return data.substr(offs, td::narrow_cast<size_t>(offs_end - offs));
+}
+
+td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Slice cells_slice,
+                                                               td::Span<td::Ref<DataCell>> cells_span,
+                                                               std::vector<td::uint8>* cell_should_cache) {
+  TRY_RESULT(cell_slice, get_cell_slice(idx, cells_slice));
+  std::array<td::Ref<Cell>, 4> refs_buf;
+
+  CellSerializationInfo cell_info;
+  TRY_STATUS(cell_info.init(cell_slice, info.ref_byte_size));
+  if (cell_info.end_offset != cell_slice.size()) {
+    return td::Status::Error("unused space in cell serialization");
+  }
+
+  auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
+  for (int k = 0; k < cell_info.refs_cnt; k++) {
+    int ref_idx = (int)info.read_ref(cell_slice.ubegin() + cell_info.refs_offset + k * info.ref_byte_size);
+    if (ref_idx <= idx) {
+      return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
+                                        << " is to cell #" << ref_idx << " with smaller index");
+    }
+    if (ref_idx >= cell_count) {
+      return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
+                                        << " is to non-existent cell #" << ref_idx << ", only " << cell_count
+                                        << " cells are defined");
+    }
+    refs[k] = cells_span[cell_count - ref_idx - 1];
+    if (cell_should_cache) {
+      auto& cnt = (*cell_should_cache)[ref_idx];
+      if (cnt < 2) {
+        cnt++;
+      }
+    }
+  }
+
+  return cell_info.create_data_cell(cell_slice, refs);
+}
+
+td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int max_roots) {
+  std::cerr << "Running custom deserialize impl";
+  get_og().clear();
+  long long size_est = info.parse_serialized_header(data);
+  if (size_est == 0) {
+    return td::Status::Error(PSLICE() << "cannot deserialize bag-of-cells: invalid header, error " << size_est);
+  }
+  if (size_est < 0) {
+    return size_est;
+  }
+
+  if (size_est > (long long)data.size()) {
+    //LOG(ERROR) << "cannot deserialize bag-of-cells: not enough bytes (" << data.size() << " present, " << size_est
+    //<< " required)";
+    return -size_est;
+  }
+  //LOG(INFO) << "estimated size " << size_est << ", true size " << data.size();
+  if (info.root_count > max_roots) {
+    return td::Status::Error("Bag-of-cells has more root cells than expected");
+  }
+  if (info.has_crc32c) {
+    unsigned crc_computed = td::crc32c(td::Slice{data.ubegin(), data.uend() - 4});
+    unsigned crc_stored = td::as<unsigned>(data.uend() - 4);
+    if (crc_computed != crc_stored) {
+      return td::Status::Error(PSLICE() << "bag-of-cells CRC32C mismatch: expected " << td::format::as_hex(crc_computed)
+                                        << ", found " << td::format::as_hex(crc_stored));
+    }
+  }
+
+  cell_count = info.cell_count;
+  std::vector<td::uint8> cell_should_cache;
+  if (info.has_cache_bits) {
+    cell_should_cache.resize(cell_count, 0);
+  }
+  roots.clear();
+  roots.resize(info.root_count);
+  auto* roots_ptr = data.substr(info.roots_offset).ubegin();
+  for (int i = 0; i < info.root_count; i++) {
+    int idx = 0;
+    if (info.has_roots) {
+      idx = (int)info.read_ref(roots_ptr + i * info.ref_byte_size);
+    }
+    if (idx < 0 || idx >= info.cell_count) {
+      return td::Status::Error(PSLICE() << "bag-of-cells invalid root index " << idx);
+    }
+    roots[i].idx = info.cell_count - idx - 1;
+    if (info.has_cache_bits) {
+      auto& cnt = cell_should_cache[idx];
+      if (cnt < 2) {
+        cnt++;
+      }
+    }
+  }
+  if (info.has_index) {
+    index_ptr = data.substr(info.index_offset).ubegin();
+    // TODO: should we validate index here
+  } else {
+    index_ptr = nullptr;
+    unsigned long long cur = 0;
+    custom_index.reserve(info.cell_count);
+
+    auto cells_slice = data.substr(info.data_offset, info.data_size);
+
+    for (int i = 0; i < info.cell_count; i++) {
+      CellSerializationInfo cell_info;
+      auto status = cell_info.init(cells_slice, info.ref_byte_size);
+      if (status.is_error()) {
+        return td::Status::Error(PSLICE()
+                                 << "invalid bag-of-cells failed to deserialize cell #" << i << " " << status.error());
+      }
+      cells_slice = cells_slice.substr(cell_info.end_offset);
+      cur += cell_info.end_offset;
+      custom_index.push_back(cur);
+    }
+    if (!cells_slice.empty()) {
+      return td::Status::Error(PSLICE() << "invalid bag-of-cells last cell #" << info.cell_count - 1 << ": end offset "
+                                        << cur << " is different from total data size " << info.data_size);
+    }
+  }
+  auto cells_slice = data.substr(info.data_offset, info.data_size);
+  std::vector<Ref<DataCell>> cell_list;
+  cell_list.reserve(cell_count);
+  std::array<td::Ref<Cell>, 4> refs_buf;
+  for (int i = 0; i < cell_count; i++) {
+    // reconstruct cell with index cell_count - 1 - i
+    int idx = cell_count - 1 - i;
+    auto r_cell = deserialize_cell(idx, cells_slice, cell_list, info.has_cache_bits ? &cell_should_cache : nullptr);
+    if (r_cell.is_error()) {
+      return td::Status::Error(PSLICE() << "invalid bag-of-cells failed to deserialize cell #" << idx << " "
+                                        << r_cell.error());
+    }
+    cell_list.push_back(r_cell.move_as_ok());
+    DCHECK(cell_list.back().not_null());
+  }
+  if (info.has_cache_bits) {
+    for (int idx = 0; idx < cell_count; idx++) {
+      auto should_cache = cell_should_cache[idx] > 1;
+      auto stored_should_cache = get_cache_entry(idx);
+      if (should_cache != stored_should_cache) {
+        return td::Status::Error(PSLICE() << "invalid bag-of-cells cell #" << idx << " has wrong cache flag "
+                                          << stored_should_cache);
+      }
+    }
+  }
+  custom_index.clear();
+  index_ptr = nullptr;
+  root_count = info.root_count;
+  dangle_count = info.absent_count;
+  for (auto& root_info : roots) {
+    root_info.cell = cell_list[root_info.idx];
+  }
+  cell_list.clear();
+  return size_est;
+}
+
 td::Result<td::BufferSlice> custom_boc_serialize(Ref<Cell> root, int mode) {
   if (root.is_null()) {
     return td::Status::Error("cannot serialize a null cell reference into a bag of cells");
@@ -291,6 +607,29 @@ td::Result<td::BufferSlice> custom_boc_serialize(Ref<Cell> root, int mode) {
   return custom_boc.serialize_to_slice(mode);
 }
 
+td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty = false, bool allow_nonzero_level = false) {
+  if (data.empty() && can_be_empty) {
+    return Ref<Cell>();
+  }
+  CustomBagOfCells custom_boc;
+  auto res = custom_boc.deserialize(data, 1);
+  if (res.is_error()) {
+    return res.move_as_error();
+  }
+  auto boc = *reinterpret_cast<BagOfCells*>(&custom_boc);
+  if (boc.get_root_count() != 1) {
+    return td::Status::Error("bag of cells is expected to have exactly one root");
+  }
+  auto root = boc.get_root_cell();
+  if (root.is_null()) {
+    return td::Status::Error("bag of cells has null root cell (?)");
+  }
+  if (!allow_nonzero_level && root->get_level() != 0) {
+    return td::Status::Error("bag of cells has a root with non-zero level");
+  }
+  return std::move(root);
+}
+
 } // namespace vm
 
 
@@ -302,7 +641,7 @@ td::BufferSlice compress(td::Slice data) {
 
 td::BufferSlice decompress(td::Slice data) {
   td::BufferSlice serialized = td::lz4_decompress(data, 2 << 20).move_as_ok();
-  auto root = vm::std_boc_deserialize(serialized).move_as_ok();
+  auto root = vm::custom_boc_deserialize(serialized).move_as_ok();
   return vm::std_boc_serialize(root, 31).move_as_ok();
 }
 
