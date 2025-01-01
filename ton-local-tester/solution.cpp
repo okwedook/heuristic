@@ -11,10 +11,17 @@
 #include "td/utils/base64.h"
 #include "vm/boc.h"
 #include "block/block-auto.h"
+#include "crypto/vm/boc-writers.h"
 
 namespace vm {
 class CustomBagOfCells {
  public:
+  const BagOfCells& get_og() const {
+    return *reinterpret_cast<const BagOfCells*>(this);
+  }
+  BagOfCells& get_og() {
+    return *reinterpret_cast<BagOfCells*>(this);
+  }
   enum { hash_bytes = vm::Cell::hash_bytes, default_max_roots = 16384 };
   enum Mode { WithIndex = 1, WithCRC32C = 2, WithTopHash = 4, WithIntHashes = 8, WithCacheBits = 16, max = 31 };
   enum { max_cell_whs = 64 };
@@ -56,7 +63,6 @@ class CustomBagOfCells {
     }
   };
 
- private:
   int cell_count{0}, root_count{0}, dangle_count{0}, int_refs{0};
   int int_hashes{0}, top_hashes{0};
   int max_depth{1024};
@@ -131,7 +137,6 @@ class CustomBagOfCells {
   static int precompute_cell_serialization_size(const unsigned char* cell, std::size_t len, int ref_size,
                                                 int* refs_num_ptr = nullptr);
 
- private:
   int rv_idx;
   td::Result<int> import_cell(td::Ref<vm::Cell> cell, int depth);
   void cells_clear() {
@@ -152,11 +157,146 @@ class CustomBagOfCells {
                                                      std::vector<td::uint8>* cell_should_cache);
 };
 
+//serialized_boc#672fb0ac has_idx:(## 1) has_crc32c:(## 1)
+//  has_cache_bits:(## 1) flags:(## 2) { flags = 0 }
+//  size:(## 3) { size <= 4 }
+//  off_bytes:(## 8) { off_bytes <= 8 }
+//  cells:(##(size * 8))
+//  roots:(##(size * 8))
+//  absent:(##(size * 8)) { roots + absent <= cells }
+//  tot_cells_size:(##(off_bytes * 8))
+//  index:(cells * ##(off_bytes * 8))
+//  cell_data:(tot_cells_size * [ uint8 ])
+//  = BagOfCells;
+// Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
+template <typename WriterT>
+td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int mode) {
+  std::cerr << "Running custom serialize impl";
+  auto store_ref = [&](unsigned long long value) { writer.store_uint(value, info.ref_byte_size); };
+  auto store_offset = [&](unsigned long long value) { writer.store_uint(value, info.offset_byte_size); };
+
+  writer.store_uint(info.magic, 4);
+
+  td::uint8 byte{0};
+  if (info.has_index) {
+    byte |= 1 << 7;
+  }
+  if (info.has_crc32c) {
+    byte |= 1 << 6;
+  }
+  if (info.has_cache_bits) {
+    byte |= 1 << 5;
+  }
+  // 3, 4 - flags
+  if (info.ref_byte_size < 1 || info.ref_byte_size > 7) {
+    return 0;
+  }
+  byte |= static_cast<td::uint8>(info.ref_byte_size);
+  writer.store_uint(byte, 1);
+
+  writer.store_uint(info.offset_byte_size, 1);
+  store_ref(cell_count);
+  store_ref(root_count);
+  store_ref(0);
+  store_offset(info.data_size);
+  for (const auto& root_info : roots) {
+    int k = cell_count - 1 - root_info.idx;
+    DCHECK(k >= 0 && k < cell_count);
+    store_ref(k);
+  }
+  DCHECK(writer.position() == info.index_offset);
+  DCHECK((unsigned)cell_count == cell_list_.size());
+  if (info.has_index) {
+    std::size_t offs = 0;
+    for (int i = cell_count - 1; i >= 0; --i) {
+      const Ref<DataCell>& dc = cell_list_[i].dc_ref;
+      bool with_hash = (mode & Mode::WithIntHashes) && !cell_list_[i].wt;
+      if (cell_list_[i].is_root_cell && (mode & Mode::WithTopHash)) {
+        with_hash = true;
+      }
+      offs += dc->get_serialized_size(with_hash) + dc->size_refs() * info.ref_byte_size;
+      auto fixed_offset = offs;
+      if (info.has_cache_bits) {
+        fixed_offset = offs * 2 + cell_list_[i].should_cache;
+      }
+      store_offset(fixed_offset);
+    }
+    DCHECK(offs == info.data_size);
+  }
+  DCHECK(writer.position() == info.data_offset);
+  size_t keep_position = writer.position();
+  for (int i = 0; i < cell_count; ++i) {
+    const auto& dc_info = cell_list_[cell_count - 1 - i];
+    const Ref<DataCell>& dc = dc_info.dc_ref;
+    bool with_hash = (mode & Mode::WithIntHashes) && !dc_info.wt;
+    if (dc_info.is_root_cell && (mode & Mode::WithTopHash)) {
+      with_hash = true;
+    }
+    unsigned char buf[256];
+    int s = dc->serialize(buf, 256, with_hash);
+    writer.store_bytes(buf, s);
+    DCHECK(dc->size_refs() == dc_info.ref_num);
+    for (unsigned j = 0; j < dc_info.ref_num; ++j) {
+      int k = cell_count - 1 - dc_info.ref_idx[j];
+      DCHECK(k > i && k < cell_count);
+      store_ref(k);
+    }
+  }
+  writer.chk();
+  DCHECK(writer.position() - keep_position == info.data_size);
+  DCHECK(writer.remaining() == (info.has_crc32c ? 4 : 0));
+  if (info.has_crc32c) {
+    unsigned crc = writer.get_crc32();
+    writer.store_uint(td::bswap32(crc), 4);
+  }
+  DCHECK(writer.empty());
+  return writer.position();
+}
+
+td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, std::size_t buff_size, int mode) {
+  std::size_t size_est = get_og().estimate_serialized_size(mode);
+  if (!size_est || size_est > buff_size) {
+    return 0;
+  }
+  boc_writers::BufferWriter writer{buffer, buffer + size_est};
+  return serialize_to_impl(writer, mode);
+}
+
+td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice(int mode) {
+  std::size_t size_est = get_og().estimate_serialized_size(mode);
+  if (!size_est) {
+    return td::Status::Error("no cells to serialize to this bag of cells");
+  }
+  td::BufferSlice res(size_est);
+  TRY_RESULT(size, serialize_to(const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(res.data())),
+                                res.size(), mode));
+  if (size == res.size()) {
+    return std::move(res);
+  } else {
+    return td::Status::Error("error while serializing a bag of cells: actual serialized size differs from estimated");
+  }
+}
+
+td::Result<td::BufferSlice> custom_boc_serialize(Ref<Cell> root, int mode) {
+  if (root.is_null()) {
+    return td::Status::Error("cannot serialize a null cell reference into a bag of cells");
+  }
+  BagOfCells boc;
+  boc.add_root(std::move(root));
+  auto res = boc.import_cells();
+  if (res.is_error()) {
+    return res.move_as_error();
+  }
+  auto custom_boc = *reinterpret_cast<CustomBagOfCells*>(&boc);
+  return custom_boc.serialize_to_slice(mode);
+}
+
 } // namespace vm
+
 
 td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
-  td::BufferSlice serialized = vm::std_boc_serialize(root, 0).move_as_ok();
+  td::BufferSlice serialized = vm::custom_boc_serialize(root, 0).move_as_ok();
   return td::lz4_compress(serialized);
 }
 
