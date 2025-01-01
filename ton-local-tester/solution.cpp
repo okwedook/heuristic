@@ -14,10 +14,7 @@
 
 td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
-  std::ostringstream ss;
-	block::gen::Block().print_ref(ss, root);
-	std::cerr << "Block size = " << ss.str().size();
-  td::BufferSlice serialized = vm::std_boc_serialize(root, 2).move_as_ok();
+  td::BufferSlice serialized = vm::std_boc_serialize(root, 0).move_as_ok();
   return td::lz4_compress(serialized);
 }
 
