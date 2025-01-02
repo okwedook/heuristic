@@ -198,7 +198,8 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
   if (sz < 5) {
     return -10;
   }
-  td::uint8 byte = ptr[4];
+  // td::uint8 byte = ptr[4];
+  td::uint8 byte = 2;
   if (magic == boc_generic) {
     has_index = (byte >> 7) % 2 == 1;
     has_crc32c = (byte >> 6) % 2 == 1;
@@ -214,16 +215,16 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
   if (ref_byte_size > 4 || ref_byte_size < 1) {
     return 0;
   }
-  if (sz < 6) {
-    return -7 - 3 * ref_byte_size;
-  }
-  offset_byte_size = ptr[5];
+  // if (sz < 6) {
+  //   return -7 - 3 * ref_byte_size;
+  // }
+  offset_byte_size = ptr[4];
   if (offset_byte_size > 8 || offset_byte_size < 1) {
     return 0;
   }
-  roots_offset = 6 + 3 * ref_byte_size + offset_byte_size;
-  ptr += 6;
-  sz -= 6;
+  roots_offset = 5 + 3 * ref_byte_size + offset_byte_size;
+  ptr += 5;
+  sz -= 5;
   if (sz < ref_byte_size) {
     return -static_cast<int>(roots_offset);
   }
@@ -313,7 +314,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int
     return 0;
   }
   byte |= static_cast<td::uint8>(info.ref_byte_size);
-  writer.store_uint(byte, 1);
+  // writer.store_uint(byte, 1);
 
   writer.store_uint(info.offset_byte_size, 1);
   store_ref(cell_count);
@@ -420,7 +421,7 @@ std::size_t CustomBagOfCells::estimate_serialized_size(int mode) {
   info.cell_count = cell_count;
   info.absent_count = dangle_count;
   int crc_size = info.has_crc32c ? 4 : 0;
-  info.roots_offset = 4 + 1 + 1 + 3 * info.ref_byte_size + info.offset_byte_size;
+  info.roots_offset = 4 + 0 + 1 + 3 * info.ref_byte_size + info.offset_byte_size;
   info.index_offset = info.roots_offset + info.root_count * info.ref_byte_size;
   info.data_offset = info.index_offset;
   if (info.has_index) {
@@ -690,16 +691,22 @@ td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty =
 
 } // namespace vm
 
+constexpr bool use_lz4 = true;
 
 td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
   td::BufferSlice serialized = vm::custom_boc_serialize(root, 0).move_as_ok();
-  return td::lz4_compress(serialized);
+  return use_lz4 ? td::lz4_compress(serialized) : std::move(serialized);
 }
 
 td::BufferSlice decompress(td::Slice data) {
-  td::BufferSlice serialized = td::lz4_decompress(data, 2 << 20).move_as_ok();
-  auto root = vm::custom_boc_deserialize(serialized).move_as_ok();
+  vm::Ref<vm::Cell> root;
+  if (use_lz4) {
+    td::BufferSlice serialized = td::lz4_decompress(data, 2 << 20).move_as_ok();
+    root = vm::custom_boc_deserialize(serialized).move_as_ok();
+  } else {
+    root = vm::custom_boc_deserialize(data).move_as_ok();
+  }
   return vm::std_boc_serialize(root, 31).move_as_ok();
 }
 
