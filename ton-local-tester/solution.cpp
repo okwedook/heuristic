@@ -7,6 +7,7 @@
  * Compression algorithm takes a block, converts it to mode=2 (which has less extra information) and compresses it using lz4.
  */
 #include <iostream>
+#include <iomanip>
 #include "td/utils/lz4.h"
 #include "td/utils/base64.h"
 #include "vm/boc.h"
@@ -291,7 +292,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 template <typename WriterT>
 td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int mode) {
-  std::cerr << "Running custom serialize impl";
+  std::cerr << "Running custom serialize impl\n";
   auto store_ref = [&](unsigned long long value) { writer.store_uint(value, info.ref_byte_size); };
   auto store_offset = [&](unsigned long long value) { writer.store_uint(value, info.offset_byte_size); };
 
@@ -537,7 +538,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
 }
 
 td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int max_roots) {
-  std::cerr << "Running custom deserialize impl";
+  std::cerr << "Running custom deserialize impl\n";
   get_og().clear();
   long long size_est = info.parse_serialized_header(data);
   if (size_est == 0) {
@@ -726,4 +727,14 @@ int main() {
   }
 
   std::cout << td::base64_encode(data) << std::endl;
+
+  // freopen("res/output.txt", "a", stderr);
+
+  // std::vector<std::pair<int, int>> stcnt(vm::cnt.begin(), vm::cnt.end());
+  // std::sort(stcnt.begin(), stcnt.end(), [](auto a, auto b) {
+  //   return a.second > b.second;
+  // });
+  // for (auto [v, c] : stcnt) {
+  //   std::cerr << v << ' ' << c << std::endl;
+  // }
 }
