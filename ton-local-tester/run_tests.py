@@ -52,6 +52,7 @@ for i, test_file in enumerate(test_files):
         continue
     if result.returncode != 0:
         print(f"{Fore.RED}RE exitcode={result.returncode}{Style.RESET_ALL}")
+        print(result.stderr)
         continue
     compressed_block = result.stdout.strip()
     compressed_size = get_base64_size(compressed_block)
@@ -72,6 +73,8 @@ for i, test_file in enumerate(test_files):
         continue
     if result.returncode != 0:
         print(f"{Fore.RED}RE exitcode={result.returncode}{Style.RESET_ALL}")
+        print("Encode stderr:", encode_stderr)
+        print("Decode stderr:", result.stderr)
         continue
     decompressed_block = result.stdout.strip()
     if decompressed_block != original_block:

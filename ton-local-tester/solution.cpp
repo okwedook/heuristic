@@ -374,8 +374,70 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int
   return writer.position();
 }
 
+// Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
+td::uint64 CustomBagOfCells::compute_sizes(int mode, int& r_size, int& o_size) {
+  int rs = 0, os = 0;
+  if (!root_count || !data_bytes) {
+    r_size = o_size = 0;
+    return 0;
+  }
+  while (cell_count >= (1LL << (rs << 3))) {
+    rs++;
+  }
+  td::uint64 hashes =
+      (((mode & Mode::WithTopHash) ? top_hashes : 0) + ((mode & Mode::WithIntHashes) ? int_hashes : 0)) *
+      (Cell::hash_bytes + Cell::depth_bytes);
+  td::uint64 data_bytes_adj = data_bytes + (unsigned long long)int_refs * rs + hashes;
+  td::uint64 max_offset = (mode & Mode::WithCacheBits) ? data_bytes_adj * 2 : data_bytes_adj;
+  while (max_offset >= (1ULL << (os << 3))) {
+    os++;
+  }
+  if (rs > 4 || os > 8) {
+    r_size = o_size = 0;
+    return 0;
+  }
+  r_size = rs;
+  o_size = os;
+  return data_bytes_adj;
+}
+
+// Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
+std::size_t CustomBagOfCells::estimate_serialized_size(int mode) {
+  if ((mode & Mode::WithCacheBits) && !(mode & Mode::WithIndex)) {
+    info.invalidate();
+    return 0;
+  }
+  auto data_bytes_adj = compute_sizes(mode, info.ref_byte_size, info.offset_byte_size);
+  if (!data_bytes_adj) {
+    info.invalidate();
+    return 0;
+  }
+  info.valid = true;
+  info.has_crc32c = mode & Mode::WithCRC32C;
+  info.has_index = mode & Mode::WithIndex;
+  info.has_cache_bits = mode & Mode::WithCacheBits;
+  info.root_count = root_count;
+  info.cell_count = cell_count;
+  info.absent_count = dangle_count;
+  int crc_size = info.has_crc32c ? 4 : 0;
+  info.roots_offset = 4 + 1 + 1 + 3 * info.ref_byte_size + info.offset_byte_size;
+  info.index_offset = info.roots_offset + info.root_count * info.ref_byte_size;
+  info.data_offset = info.index_offset;
+  if (info.has_index) {
+    info.data_offset += (long long)cell_count * info.offset_byte_size;
+  }
+  info.magic = Info::boc_generic;
+  info.data_size = data_bytes_adj;
+  info.total_size = info.data_offset + data_bytes_adj + crc_size;
+  auto res = td::narrow_cast_safe<size_t>(info.total_size);
+  if (res.is_error()) {
+    return 0;
+  }
+  return res.ok();
+}
+
 td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, std::size_t buff_size, int mode) {
-  std::size_t size_est = get_og().estimate_serialized_size(mode);
+  std::size_t size_est = estimate_serialized_size(mode);
   if (!size_est || size_est > buff_size) {
     return 0;
   }
@@ -384,7 +446,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, st
 }
 
 td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice(int mode) {
-  std::size_t size_est = get_og().estimate_serialized_size(mode);
+  std::size_t size_est = estimate_serialized_size(mode);
   if (!size_est) {
     return td::Status::Error("no cells to serialize to this bag of cells");
   }
