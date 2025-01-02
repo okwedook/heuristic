@@ -179,11 +179,9 @@ void CustomBagOfCells::Info::write_int(unsigned char* ptr, unsigned long long va
 long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice) {
   invalidate();
   int sz = static_cast<int>(std::min(slice.size(), static_cast<std::size_t>(0xffff)));
-  if (sz < 4) {
-    return -10;  // want at least 10 bytes
-  }
   const unsigned char* ptr = slice.ubegin();
-  magic = (unsigned)read_int(ptr, 4);
+  // magic = (unsigned)read_int(ptr, 4);
+  magic = boc_generic;
   has_crc32c = false;
   has_index = false;
   has_cache_bits = false;
@@ -195,7 +193,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
     magic = 0;
     return 0;
   }
-  if (sz < 5) {
+  if (sz < 1) {
     return -10;
   }
   // td::uint8 byte = ptr[4];
@@ -218,13 +216,13 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
   // if (sz < 6) {
   //   return -7 - 3 * ref_byte_size;
   // }
-  offset_byte_size = ptr[4];
+  offset_byte_size = ptr[0];
   if (offset_byte_size > 8 || offset_byte_size < 1) {
     return 0;
   }
-  roots_offset = 5 + 3 * ref_byte_size + offset_byte_size;
-  ptr += 5;
-  sz -= 5;
+  roots_offset = 1 + 3 * ref_byte_size + offset_byte_size;
+  ptr += 1;
+  sz -= 1;
   if (sz < ref_byte_size) {
     return -static_cast<int>(roots_offset);
   }
@@ -297,7 +295,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int
   auto store_ref = [&](unsigned long long value) { writer.store_uint(value, info.ref_byte_size); };
   auto store_offset = [&](unsigned long long value) { writer.store_uint(value, info.offset_byte_size); };
 
-  writer.store_uint(info.magic, 4);
+  // writer.store_uint(info.magic, 4);
 
   td::uint8 byte{0};
   if (info.has_index) {
@@ -421,7 +419,7 @@ std::size_t CustomBagOfCells::estimate_serialized_size(int mode) {
   info.cell_count = cell_count;
   info.absent_count = dangle_count;
   int crc_size = info.has_crc32c ? 4 : 0;
-  info.roots_offset = 4 + 0 + 1 + 3 * info.ref_byte_size + info.offset_byte_size;
+  info.roots_offset = 0 + 0 + 1 + 3 * info.ref_byte_size + info.offset_byte_size;
   info.index_offset = info.roots_offset + info.root_count * info.ref_byte_size;
   info.data_offset = info.index_offset;
   if (info.has_index) {
