@@ -121,7 +121,7 @@ class CustomBagOfCells {
   td::Result<std::size_t> serialize_to(unsigned char* buffer, std::size_t buff_size, int mode = 0);
   td::Status serialize_to_file(td::FileFd& fd, int mode = 0);
   template <typename WriterT>
-  td::Result<std::size_t> serialize_to_impl(WriterT& writer, int mode = 0);
+  td::Result<std::size_t> serialize_to_impl(WriterT& writer);
   std::string extract_string() const;
 
   td::Result<long long> deserialize(const td::Slice& data, int max_roots = default_max_roots);
@@ -291,7 +291,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
 //  = BagOfCells;
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 template <typename WriterT>
-td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int mode) {
+td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   std::cerr << "Running custom serialize impl\n";
   auto store_ref = [&](unsigned long long value) { writer.store_uint(value, info.ref_byte_size); };
   auto store_offset = [&](unsigned long long value) { writer.store_uint(value, info.offset_byte_size); };
@@ -299,15 +299,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int
   // writer.store_uint(info.magic, 4);
 
   td::uint8 byte{0};
-  if (info.has_index) {
-    byte |= 1 << 7;
-  }
-  if (info.has_crc32c) {
-    byte |= 1 << 6;
-  }
-  if (info.has_cache_bits) {
-    byte |= 1 << 5;
-  }
   // 3, 4 - flags
   if (info.ref_byte_size < 1 || info.ref_byte_size > 7) {
     return 0;
@@ -331,11 +322,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int
     std::size_t offs = 0;
     for (int i = cell_count - 1; i >= 0; --i) {
       const Ref<DataCell>& dc = cell_list_[i].dc_ref;
-      bool with_hash = (mode & Mode::WithIntHashes) && !cell_list_[i].wt;
-      if (cell_list_[i].is_root_cell && (mode & Mode::WithTopHash)) {
-        with_hash = true;
-      }
-      offs += dc->get_serialized_size(with_hash) + dc->size_refs() * info.ref_byte_size;
+      offs += dc->get_serialized_size() + dc->size_refs() * info.ref_byte_size;
       auto fixed_offset = offs;
       if (info.has_cache_bits) {
         fixed_offset = offs * 2 + cell_list_[i].should_cache;
@@ -349,12 +336,8 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int
   for (int i = 0; i < cell_count; ++i) {
     const auto& dc_info = cell_list_[cell_count - 1 - i];
     const Ref<DataCell>& dc = dc_info.dc_ref;
-    bool with_hash = (mode & Mode::WithIntHashes) && !dc_info.wt;
-    if (dc_info.is_root_cell && (mode & Mode::WithTopHash)) {
-      with_hash = true;
-    }
     unsigned char buf[256];
-    int s = dc->serialize(buf, 256, with_hash);
+    int s = dc->serialize(buf, 256);
     writer.store_bytes(buf, s);
     DCHECK(dc->size_refs() == dc_info.ref_num);
     for (unsigned j = 0; j < dc_info.ref_num; ++j) {
@@ -435,7 +418,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, st
     return 0;
   }
   boc_writers::BufferWriter writer{buffer, buffer + size_est};
-  return serialize_to_impl(writer, mode);
+  return serialize_to_impl(writer);
 }
 
 td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice(int mode) {
