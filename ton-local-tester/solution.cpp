@@ -117,8 +117,8 @@ class CustomBagOfCells {
   std::size_t estimate_serialized_size();
   td::Status serialize(int mode = 0);
   td::string serialize_to_string(int mode = 0);
-  td::Result<td::BufferSlice> serialize_to_slice(int mode = 0);
-  td::Result<std::size_t> serialize_to(unsigned char* buffer, std::size_t buff_size, int mode = 0);
+  td::Result<td::BufferSlice> serialize_to_slice();
+  td::Result<std::size_t> serialize_to(unsigned char* buffer, std::size_t buff_size);
   td::Status serialize_to_file(td::FileFd& fd, int mode = 0);
   template <typename WriterT>
   td::Result<std::size_t> serialize_to_impl(WriterT& writer);
@@ -412,7 +412,7 @@ std::size_t CustomBagOfCells::estimate_serialized_size() {
   return res.ok();
 }
 
-td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, std::size_t buff_size, int mode) {
+td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, std::size_t buff_size) {
   std::size_t size_est = estimate_serialized_size();
   if (!size_est || size_est > buff_size) {
     return 0;
@@ -421,14 +421,14 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, st
   return serialize_to_impl(writer);
 }
 
-td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice(int mode) {
+td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   std::size_t size_est = estimate_serialized_size();
   if (!size_est) {
     return td::Status::Error("no cells to serialize to this bag of cells");
   }
   td::BufferSlice res(size_est);
   TRY_RESULT(size, serialize_to(const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(res.data())),
-                                res.size(), mode));
+                                res.size()));
   if (size == res.size()) {
     return std::move(res);
   } else {
@@ -628,7 +628,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   return size_est;
 }
 
-td::Result<td::BufferSlice> custom_boc_serialize(Ref<Cell> root, int mode) {
+td::Result<td::BufferSlice> custom_boc_serialize(Ref<Cell> root) {
   if (root.is_null()) {
     return td::Status::Error("cannot serialize a null cell reference into a bag of cells");
   }
@@ -639,7 +639,7 @@ td::Result<td::BufferSlice> custom_boc_serialize(Ref<Cell> root, int mode) {
     return res.move_as_error();
   }
   auto custom_boc = *reinterpret_cast<CustomBagOfCells*>(&boc);
-  return custom_boc.serialize_to_slice(mode);
+  return custom_boc.serialize_to_slice();
 }
 td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty = false, bool allow_nonzero_level = false) {
   if (data.empty() && can_be_empty) {
@@ -670,7 +670,7 @@ constexpr bool use_lz4 = true;
 
 td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
-  td::BufferSlice serialized = vm::custom_boc_serialize(root, 0).move_as_ok();
+  td::BufferSlice serialized = vm::custom_boc_serialize(root).move_as_ok();
   return use_lz4 ? td::lz4_compress(serialized) : std::move(serialized);
 }
 
