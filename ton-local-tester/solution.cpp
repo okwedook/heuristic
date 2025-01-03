@@ -44,8 +44,8 @@ private:
 };
 
 struct BitReader {
-  BitReader(td::Slice _data) : data(_data), ptr(0), bit_index(0) {}
-  BitReader(td::Slice _data, int _from_byte) : data(_data), ptr(_from_byte), bit_index(0) {}
+  // BitReader(const td::Slice& _data) : data(_data), ptr(0), bit_index(0) {}
+  BitReader(const td::Slice& _data, int _from_byte) : data(_data), ptr(_from_byte), bit_index(0) {}
   bool read_bit() {
     if (bit_index == 8) {
       flush_byte();
@@ -73,7 +73,7 @@ struct BitReader {
     }
   }
 private:
-  td::Slice data;
+  const td::Slice& data;
   uint8_t ptr;
   int bit_index;
 };
@@ -260,7 +260,8 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
   if (sz < 1) {
     return -10;
   }
-  td::uint8 byte = ptr[0];
+  BitReader breader(slice, 0);
+  td::uint8 byte = breader.read_bits(3);
   // td::uint8 byte = 2;
   ref_byte_size = byte & 7;
   if (ref_byte_size > 4 || ref_byte_size < 1) {
@@ -269,13 +270,15 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
   // if (sz < 6) {
   //   return -7 - 3 * ref_byte_size;
   // }
-  offset_byte_size = ptr[1];
+  // offset_byte_size = ptr[1];
+  offset_byte_size = breader.read_bits(3);
   if (offset_byte_size > 8 || offset_byte_size < 1) {
     return 0;
   }
-  roots_offset = 2 + 3 * ref_byte_size + offset_byte_size;
-  ptr += 2;
-  sz -= 2;
+  int start_size = breader.flush_and_get_ptr();
+  roots_offset = start_size + 3 * ref_byte_size + offset_byte_size;
+  ptr += start_size;
+  sz -= start_size;
   if (sz < ref_byte_size) {
     return -static_cast<int>(roots_offset);
   }
@@ -354,9 +357,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   byte |= static_cast<td::uint8>(info.ref_byte_size);
   bwriter.write_bits(byte, 3);
 
-  bwriter.flush_byte();
-
-  bwriter.write_bits(info.offset_byte_size, 8);
+  bwriter.write_bits(info.offset_byte_size, 4);
 
   bwriter.flush_byte();
   store_ref(cell_count);
@@ -429,7 +430,7 @@ std::size_t CustomBagOfCells::estimate_serialized_size() {
   info.root_count = root_count;
   info.cell_count = cell_count;
   info.absent_count = dangle_count;
-  info.roots_offset = 0 + 1 + 1 + 3 * info.ref_byte_size + info.offset_byte_size;
+  info.roots_offset = 0 + 1 + 0 + 3 * info.ref_byte_size + info.offset_byte_size;
   info.index_offset = info.roots_offset + info.root_count * info.ref_byte_size;
   info.data_offset = info.index_offset;
   info.magic = Info::boc_generic;
