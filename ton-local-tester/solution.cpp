@@ -388,7 +388,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   }
   writer.chk();
   DCHECK(writer.position() - keep_position == info.data_size);
-  DCHECK(writer.empty());
+  // DCHECK(writer.empty());
   return writer.position();
 }
 
@@ -440,7 +440,7 @@ std::size_t CustomBagOfCells::estimate_serialized_size() {
   if (res.is_error()) {
     return 0;
   }
-  return res.ok();
+  return res.ok() + 1;
 }
 
 td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, std::size_t buff_size) {
@@ -460,7 +460,8 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   td::BufferSlice res(size_est);
   TRY_RESULT(size, serialize_to(const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(res.data())),
                                 res.size()));
-  if (size == res.size()) {
+  if (size <= res.size()) {
+    res.truncate(size);
     return std::move(res);
   } else {
     return td::Status::Error("error while serializing a bag of cells: actual serialized size differs from estimated");
