@@ -197,8 +197,8 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
   if (sz < 1) {
     return -10;
   }
-  // td::uint8 byte = ptr[4];
-  td::uint8 byte = 2;
+  td::uint8 byte = ptr[0];
+  // td::uint8 byte = 2;
   if (magic == boc_generic) {
     has_index = (byte >> 7) % 2 == 1;
     has_crc32c = (byte >> 6) % 2 == 1;
@@ -217,13 +217,13 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
   // if (sz < 6) {
   //   return -7 - 3 * ref_byte_size;
   // }
-  offset_byte_size = ptr[0];
+  offset_byte_size = ptr[1];
   if (offset_byte_size > 8 || offset_byte_size < 1) {
     return 0;
   }
-  roots_offset = 1 + 3 * ref_byte_size + offset_byte_size;
-  ptr += 1;
-  sz -= 1;
+  roots_offset = 2 + 3 * ref_byte_size + offset_byte_size;
+  ptr += 2;
+  sz -= 2;
   if (sz < ref_byte_size) {
     return -static_cast<int>(roots_offset);
   }
@@ -304,7 +304,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     return 0;
   }
   byte |= static_cast<td::uint8>(info.ref_byte_size);
-  // writer.store_uint(byte, 1);
+  writer.store_uint(byte, 1);
 
   writer.store_uint(info.offset_byte_size, 1);
   store_ref(cell_count);
@@ -396,7 +396,7 @@ std::size_t CustomBagOfCells::estimate_serialized_size() {
   info.cell_count = cell_count;
   info.absent_count = dangle_count;
   int crc_size = info.has_crc32c ? 4 : 0;
-  info.roots_offset = 0 + 0 + 1 + 3 * info.ref_byte_size + info.offset_byte_size;
+  info.roots_offset = 0 + 1 + 1 + 3 * info.ref_byte_size + info.offset_byte_size;
   info.index_offset = info.roots_offset + info.root_count * info.ref_byte_size;
   info.data_offset = info.index_offset;
   if (info.has_index) {
