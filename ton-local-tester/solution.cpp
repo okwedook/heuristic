@@ -8,12 +8,75 @@
  */
 #include <iostream>
 #include <iomanip>
+#include <stdexcept>
 #include "td/utils/lz4.h"
 #include "td/utils/base64.h"
 #include "vm/boc.h"
 #include "block/block-auto.h"
 #include "crypto/vm/boc-writers.h"
 #include "tdutils/td/utils/misc.h"
+
+template<class Writer>
+struct BitWriter {
+  BitWriter(Writer& _w) : w(_w), bit_value(0), bits(0) {}
+  void write_bits(uint64_t value, int bit_size) {
+    for (int i = 0; i < bit_size; ++i) {
+      write_bit(value >> i & 1);
+    }
+  }
+  void write_bit(bool bit) {
+    bit_value |= static_cast<uint8_t>(bit) << bits;
+    ++bits;
+    if (bits == 8) {
+      flush_byte();
+    }
+  }
+  void flush_byte() {
+    if (bits != 0) {
+      w.store_uint(bit_value, 1); // stores exactly byte
+      bits = 0;
+    }
+  }
+private:
+  Writer& w;
+  uint8_t bit_value;
+  int bits;
+};
+
+struct BitReader {
+  BitReader(td::Slice _data) : data(_data), ptr(0), bit_index(0) {}
+  BitReader(td::Slice _data, int _from_byte) : data(_data), ptr(_from_byte), bit_index(0) {}
+  bool read_bit() {
+    if (bit_index == 8) {
+      flush_byte();
+    }
+    if (ptr >= data.size()) {
+      throw std::range_error("Trying to read more bits, than there is in a slice");
+    }
+    return data[ptr] >> bit_index++ & 1;
+  }
+  uint64_t read_bits(int bits) {
+    uint64_t ans = 0;
+    for (int i = 0; i < bits; ++i) {
+      ans |= static_cast<uint64_t>(read_bit()) << i;
+    }
+    return ans;
+  }
+  int flush_and_get_ptr() {
+    flush_byte();
+    return ptr;
+  }
+  void flush_byte() {
+    if (bit_index != 0) {
+      ++ptr;
+      bit_index = 0;
+    }
+  }
+private:
+  td::Slice data;
+  uint8_t ptr;
+  int bit_index;
+};
 
 namespace vm {
 class CustomBagOfCells {
@@ -278,6 +341,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 template <typename WriterT>
 td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
+  BitWriter bwriter(writer);
   std::cerr << "Running custom serialize impl\n";
   auto store_ref = [&](unsigned long long value) { writer.store_uint(value, info.ref_byte_size); };
   auto store_offset = [&](unsigned long long value) { writer.store_uint(value, info.offset_byte_size); };
@@ -288,9 +352,13 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     return 0;
   }
   byte |= static_cast<td::uint8>(info.ref_byte_size);
-  writer.store_uint(byte, 1);
+  bwriter.write_bits(byte, 3);
 
-  writer.store_uint(info.offset_byte_size, 1);
+  bwriter.flush_byte();
+
+  bwriter.write_bits(info.offset_byte_size, 8);
+
+  bwriter.flush_byte();
   store_ref(cell_count);
   store_ref(root_count);
   store_ref(0);
