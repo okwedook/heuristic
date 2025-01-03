@@ -148,7 +148,7 @@ class CustomBagOfCells {
     cells.clear();
     cell_list_.clear();
   }
-  td::uint64 compute_sizes(int mode, int& r_size, int& o_size);
+  td::uint64 compute_sizes(int& r_size, int& o_size);
   void reorder_cells();
   int revisit(int cell_idx, int force = 0);
   unsigned long long get_idx_entry_raw(int index);
@@ -375,7 +375,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer, int
 }
 
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
-td::uint64 CustomBagOfCells::compute_sizes(int mode, int& r_size, int& o_size) {
+td::uint64 CustomBagOfCells::compute_sizes(int& r_size, int& o_size) {
   int rs = 0, os = 0;
   if (!root_count || !data_bytes) {
     r_size = o_size = 0;
@@ -384,11 +384,8 @@ td::uint64 CustomBagOfCells::compute_sizes(int mode, int& r_size, int& o_size) {
   while (cell_count >= (1LL << (rs << 3))) {
     rs++;
   }
-  td::uint64 hashes =
-      (((mode & Mode::WithTopHash) ? top_hashes : 0) + ((mode & Mode::WithIntHashes) ? int_hashes : 0)) *
-      (Cell::hash_bytes + Cell::depth_bytes);
-  td::uint64 data_bytes_adj = data_bytes + (unsigned long long)int_refs * rs + hashes;
-  td::uint64 max_offset = (mode & Mode::WithCacheBits) ? data_bytes_adj * 2 : data_bytes_adj;
+  td::uint64 data_bytes_adj = data_bytes + (unsigned long long)int_refs * rs;
+  td::uint64 max_offset = data_bytes_adj;
   while (max_offset >= (1ULL << (os << 3))) {
     os++;
   }
@@ -407,7 +404,7 @@ std::size_t CustomBagOfCells::estimate_serialized_size(int mode) {
     info.invalidate();
     return 0;
   }
-  auto data_bytes_adj = compute_sizes(mode, info.ref_byte_size, info.offset_byte_size);
+  auto data_bytes_adj = compute_sizes(info.ref_byte_size, info.offset_byte_size);
   if (!data_bytes_adj) {
     info.invalidate();
     return 0;
