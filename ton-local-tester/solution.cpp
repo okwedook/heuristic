@@ -114,7 +114,7 @@ class CustomBagOfCells {
   int add_root(td::Ref<vm::Cell> add_root);
   td::Status import_cells() TD_WARN_UNUSED_RESULT;
   CustomBagOfCells() = default;
-  std::size_t estimate_serialized_size(int mode = 0);
+  std::size_t estimate_serialized_size();
   td::Status serialize(int mode = 0);
   td::string serialize_to_string(int mode = 0);
   td::Result<td::BufferSlice> serialize_to_slice(int mode = 0);
@@ -399,20 +399,16 @@ td::uint64 CustomBagOfCells::compute_sizes(int& r_size, int& o_size) {
 }
 
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
-std::size_t CustomBagOfCells::estimate_serialized_size(int mode) {
-  if ((mode & Mode::WithCacheBits) && !(mode & Mode::WithIndex)) {
-    info.invalidate();
-    return 0;
-  }
+std::size_t CustomBagOfCells::estimate_serialized_size() {
   auto data_bytes_adj = compute_sizes(info.ref_byte_size, info.offset_byte_size);
   if (!data_bytes_adj) {
     info.invalidate();
     return 0;
   }
   info.valid = true;
-  info.has_crc32c = mode & Mode::WithCRC32C;
-  info.has_index = mode & Mode::WithIndex;
-  info.has_cache_bits = mode & Mode::WithCacheBits;
+  info.has_crc32c = false;
+  info.has_index = false;
+  info.has_cache_bits = false;
   info.root_count = root_count;
   info.cell_count = cell_count;
   info.absent_count = dangle_count;
@@ -434,7 +430,7 @@ std::size_t CustomBagOfCells::estimate_serialized_size(int mode) {
 }
 
 td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, std::size_t buff_size, int mode) {
-  std::size_t size_est = estimate_serialized_size(mode);
+  std::size_t size_est = estimate_serialized_size();
   if (!size_est || size_est > buff_size) {
     return 0;
   }
@@ -443,7 +439,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, st
 }
 
 td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice(int mode) {
-  std::size_t size_est = estimate_serialized_size(mode);
+  std::size_t size_est = estimate_serialized_size();
   if (!size_est) {
     return td::Status::Error("no cells to serialize to this bag of cells");
   }
