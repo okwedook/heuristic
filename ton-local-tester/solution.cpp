@@ -790,9 +790,10 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   DCHECK((unsigned)cell_count == cell_list_.size());
   DCHECK(writer.position() == info.data_offset);
   size_t keep_position = writer.position();
-  for (int i = 0; i < cell_count; ++i) {
+  for (int i = cell_count - 1; i >= 0; --i) {
     int idx = cell_count - 1 - i;
-    // std::cerr << "Saving cell with idx " << idx << " with refnum " << int(cell_list_[idx].ref_num) << '\n';
+    std::cerr << "Saving cell with idx " << i << " with refnum " << int(cell_list_[idx].ref_num) << '\n';
+    auto start_position = writer.position();
     const auto& dc_info = cell_list_[idx];
     const Ref<DataCell>& dc = dc_info.dc_ref;
     unsigned char buf[256];
@@ -801,9 +802,12 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     DCHECK(dc->size_refs() == dc_info.ref_num);
     for (unsigned j = 0; j < dc_info.ref_num; ++j) {
       int k = cell_count - 1 - dc_info.ref_idx[j];
+      std::cerr << "Link from " << i << " to " << k << '\n';
       DCHECK(k > i && k < cell_count);
       store_ref(k - i);
     }
+    auto end_position = writer.position();
+    std::cerr << "Cell position " << start_position << ' ' << end_position << '\n';
   }
   writer.chk();
   DCHECK(writer.position() - keep_position == info.data_size);
@@ -888,6 +892,7 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
 }
 
 unsigned long long CustomBagOfCells::get_idx_entry_raw(int index) {
+  index = custom_index.size() - 1 - index;
   if (index < 0) {
     return 0;
   }
@@ -902,9 +907,9 @@ unsigned long long CustomBagOfCells::get_idx_entry(int index) {
 }
 
 td::Result<td::Slice> CustomBagOfCells::get_cell_slice(int idx, td::Slice data) {
-  unsigned long long offs = get_idx_entry(idx - 1);
+  unsigned long long offs = get_idx_entry(idx + 1);
   unsigned long long offs_end = get_idx_entry(idx);
-  // std::cerr << "Offs " << offs << ' ' << offs_end << std::endl;
+  std::cerr << "Offs " << offs << ' ' << offs_end << std::endl;
   if (offs > offs_end || offs_end > data.size()) {
     return td::Status::Error(PSLICE() << "invalid index entry [" << offs << "; " << offs_end << "], "
                                       << td::tag("data.size()", data.size()));
@@ -918,7 +923,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
   std::array<td::Ref<Cell>, 4> refs_buf;
 
   CellSerializationInfo cell_info;
-  // std::cerr << int(cell_slice[0]) << ' ' << uint32_t(cell_slice[1]) << '\n';
+  std::cerr << int(cell_slice[0]) << ' ' << uint32_t(cell_slice[1]) << '\n';
   TRY_STATUS(cell_info.init(cell_slice, info.ref_byte_size));
   if (cell_info.end_offset != cell_slice.size()) {
     return td::Status::Error("unused space in cell serialization");
@@ -1006,13 +1011,14 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   for (int i = 0; i < cell_count; i++) {
     // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
+    std::cerr << "Loading cell with idx " << idx << '\n';
     auto r_cell = deserialize_cell(idx, cells_slice, cell_list);
     if (r_cell.is_error()) {
       return td::Status::Error(PSLICE() << "invalid bag-of-cells failed to deserialize cell #" << idx << " "
                                         << r_cell.error());
     }
     cell_list.push_back(r_cell.move_as_ok());
-    // std::cerr << "Loading cell with idx " << idx << " with refnum " << (*cell_list.back().get()).get_refs_cnt() << '\n';
+    std::cerr << " with refnum " << (*cell_list.back().get()).get_refs_cnt() << '\n';
     DCHECK(cell_list.back().not_null());
   }
   custom_index.clear();
