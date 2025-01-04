@@ -915,6 +915,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
   std::array<td::Ref<Cell>, 4> refs_buf;
 
   CellSerializationInfo cell_info;
+  // std::cerr << int(cell_slice[0]) << ' ' << uint32_t(cell_slice[1]) << '\n';
   TRY_STATUS(cell_info.init(cell_slice, info.ref_byte_size));
   if (cell_info.end_offset != cell_slice.size()) {
     return td::Status::Error("unused space in cell serialization");
@@ -999,7 +1000,6 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   auto cells_slice = data.substr(info.data_offset, info.data_size);
   std::vector<Ref<DataCell>> cell_list;
   cell_list.reserve(cell_count);
-  std::array<td::Ref<Cell>, 4> refs_buf;
   for (int i = 0; i < cell_count; i++) {
     // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
