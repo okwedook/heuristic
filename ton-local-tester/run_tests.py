@@ -79,6 +79,8 @@ for i, test_file in enumerate(test_files):
     decompressed_block = result.stdout.strip()
     if decompressed_block != original_block:
         print(f"{Fore.RED}WA wrong decompressed block{Style.RESET_ALL}")
+        print("Encode stderr:", encode_stderr)
+        print("Decode stderr:", result.stderr)
         continue
 
     points = 1000 * (2 * original_size) / (original_size + compressed_size)
