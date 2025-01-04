@@ -636,7 +636,7 @@ class CustomBagOfCells {
   unsigned long long get_idx_entry(int index);
   bool get_cache_entry(int index);
   td::Result<td::Slice> get_cell_slice(int index, td::Slice data);
-  td::Result<td::Ref<vm::DataCell>> deserialize_cell(int index, td::Slice data, td::Span<td::Ref<DataCell>> cells);
+  td::Result<td::Ref<vm::DataCell>> deserialize_cell(int idx, td::Slice cell_slice, td::Span<td::Ref<DataCell>> cells);
 };
 
 unsigned long long CustomBagOfCells::Info::read_int(const unsigned char* ptr, unsigned bytes) {
@@ -891,35 +891,8 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   }
 }
 
-unsigned long long CustomBagOfCells::get_idx_entry_raw(int index) {
-  index = custom_index.size() - 1 - index;
-  if (index < 0) {
-    return 0;
-  }
-  return custom_index.at(index);
-}
-bool CustomBagOfCells::get_cache_entry(int index) {
-  return true;
-}
-unsigned long long CustomBagOfCells::get_idx_entry(int index) {
-  auto raw = get_idx_entry_raw(index);
-  return raw;
-}
-
-td::Result<td::Slice> CustomBagOfCells::get_cell_slice(int idx, td::Slice data) {
-  unsigned long long offs = get_idx_entry(idx + 1);
-  unsigned long long offs_end = get_idx_entry(idx);
-  std::cerr << "Offs " << offs << ' ' << offs_end << std::endl;
-  if (offs > offs_end || offs_end > data.size()) {
-    return td::Status::Error(PSLICE() << "invalid index entry [" << offs << "; " << offs_end << "], "
-                                      << td::tag("data.size()", data.size()));
-  }
-  return data.substr(offs, td::narrow_cast<size_t>(offs_end - offs));
-}
-
-td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Slice cells_slice,
+td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Slice cell_slice,
                                                                td::Span<td::Ref<DataCell>> cells_span) {
-  TRY_RESULT(cell_slice, get_cell_slice(idx, cells_slice));
   std::array<td::Ref<Cell>, 4> refs_buf;
 
   CellSerializationInfo cell_info;
@@ -982,37 +955,22 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     }
     roots[i].idx = info.cell_count - idx - 1;
   }
-  {
-    index_ptr = nullptr;
-    unsigned long long cur = 0;
-    custom_index.reserve(info.cell_count);
-
-    auto cells_slice = data.substr(info.data_offset, info.data_size);
-
-    for (int i = 0; i < info.cell_count; i++) {
-      CellSerializationInfo cell_info;
-      auto status = cell_info.init(cells_slice, info.ref_byte_size);
-      if (status.is_error()) {
-        return td::Status::Error(PSLICE()
-                                  << "invalid bag-of-cells failed to deserialize cell #" << i << " " << status.error());
-      }
-      cells_slice = cells_slice.substr(cell_info.end_offset);
-      cur += cell_info.end_offset;
-      custom_index.push_back(cur);
-    }
-    if (!cells_slice.empty()) {
-      return td::Status::Error(PSLICE() << "invalid bag-of-cells last cell #" << info.cell_count - 1 << ": end offset "
-                                        << cur << " is different from total data size " << info.data_size);
-    }
-  }
   auto cells_slice = data.substr(info.data_offset, info.data_size);
   std::vector<Ref<DataCell>> cell_list;
   cell_list.reserve(cell_count);
   for (int i = 0; i < cell_count; i++) {
+    CellSerializationInfo cell_info;
+    auto status = cell_info.init(cells_slice, info.ref_byte_size);
+    if (status.is_error()) {
+      return td::Status::Error(PSLICE()
+                                << "invalid bag-of-cells failed to deserialize cell #" << i << " " << status.error());
+    }
+    auto cell_slice = cells_slice.substr(0, cell_info.end_offset);
+    cells_slice = cells_slice.substr(cell_info.end_offset);
     // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
     std::cerr << "Loading cell with idx " << idx << '\n';
-    auto r_cell = deserialize_cell(idx, cells_slice, cell_list);
+    auto r_cell = deserialize_cell(idx, cell_slice, cell_list);
     if (r_cell.is_error()) {
       return td::Status::Error(PSLICE() << "invalid bag-of-cells failed to deserialize cell #" << idx << " "
                                         << r_cell.error());
@@ -1021,7 +979,6 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     std::cerr << " with refnum " << (*cell_list.back().get()).get_refs_cnt() << '\n';
     DCHECK(cell_list.back().not_null());
   }
-  custom_index.clear();
   index_ptr = nullptr;
   root_count = info.root_count;
   dangle_count = info.absent_count;
