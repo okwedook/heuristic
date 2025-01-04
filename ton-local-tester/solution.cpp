@@ -791,7 +791,9 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   DCHECK(writer.position() == info.data_offset);
   size_t keep_position = writer.position();
   for (int i = 0; i < cell_count; ++i) {
-    const auto& dc_info = cell_list_[cell_count - 1 - i];
+    int idx = cell_count - 1 - i;
+    // std::cerr << "Saving cell with idx " << idx << " with refnum " << int(cell_list_[idx].ref_num) << '\n';
+    const auto& dc_info = cell_list_[idx];
     const Ref<DataCell>& dc = dc_info.dc_ref;
     unsigned char buf[256];
     int s = dc->serialize(buf, 256);
@@ -800,7 +802,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     for (unsigned j = 0; j < dc_info.ref_num; ++j) {
       int k = cell_count - 1 - dc_info.ref_idx[j];
       DCHECK(k > i && k < cell_count);
-      store_ref(k);
+      store_ref(k - i);
     }
   }
   writer.chk();
@@ -902,6 +904,7 @@ unsigned long long CustomBagOfCells::get_idx_entry(int index) {
 td::Result<td::Slice> CustomBagOfCells::get_cell_slice(int idx, td::Slice data) {
   unsigned long long offs = get_idx_entry(idx - 1);
   unsigned long long offs_end = get_idx_entry(idx);
+  // std::cerr << "Offs " << offs << ' ' << offs_end << std::endl;
   if (offs > offs_end || offs_end > data.size()) {
     return td::Status::Error(PSLICE() << "invalid index entry [" << offs << "; " << offs_end << "], "
                                       << td::tag("data.size()", data.size()));
@@ -923,7 +926,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
 
   auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
   for (int k = 0; k < cell_info.refs_cnt; k++) {
-    int ref_idx = (int)info.read_ref(cell_slice.ubegin() + cell_info.refs_offset + k * info.ref_byte_size);
+    int ref_idx = idx + (int)info.read_ref(cell_slice.ubegin() + cell_info.refs_offset + k * info.ref_byte_size);
     if (ref_idx <= idx) {
       return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
                                         << " is to cell #" << ref_idx << " with smaller index");
@@ -1009,6 +1012,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
                                         << r_cell.error());
     }
     cell_list.push_back(r_cell.move_as_ok());
+    // std::cerr << "Loading cell with idx " << idx << " with refnum " << (*cell_list.back().get()).get_refs_cnt() << '\n';
     DCHECK(cell_list.back().not_null());
   }
   custom_index.clear();
