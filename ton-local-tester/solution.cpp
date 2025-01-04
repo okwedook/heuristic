@@ -891,13 +891,121 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   }
 }
 
+td::Status init_cell_info(CellSerializationInfo& cell_info, td::uint8 d1, td::uint8 d2, int ref_byte_size) {
+  cell_info.refs_cnt = d1 & 7;
+  cell_info.level_mask = Cell::LevelMask(d1 >> 5);
+  cell_info.special = (d1 & 8) != 0;
+  cell_info.with_hashes = (d1 & 16) != 0;
+
+  if (cell_info.refs_cnt > 4) {
+    if (cell_info.refs_cnt != 7 || !cell_info.with_hashes) {
+      return td::Status::Error("Invalid first byte");
+    }
+    cell_info.refs_cnt = 0;
+    // ...
+    // do not deserialize absent cells!
+    return td::Status::Error("TODO: absent cells");
+  }
+
+  cell_info.hashes_offset = cell_info.depth_offset = cell_info.data_offset = 2;
+  cell_info.data_len = (d2 >> 1) + (d2 & 1);
+  cell_info.data_with_bits = (d2 & 1) != 0;
+  cell_info.refs_offset = cell_info.data_offset + cell_info.data_len;
+  cell_info.end_offset = cell_info.refs_offset + cell_info.refs_cnt * ref_byte_size;
+
+  return td::Status::OK();
+}
+
+// td::Result<Ref<DataCell>> CellSerializationInfo::create_data_cell(td::Slice cell_slice,
+//                                                                   td::Span<Ref<Cell>> refs) const {
+//   CellBuilder cb;
+//   TRY_RESULT(bits, get_bits(cell_slice));
+//   cb.store_bits(cell_slice.ubegin() + data_offset, bits);
+//   DCHECK(refs_cnt == (td::int64)refs.size());
+//   for (int k = 0; k < refs_cnt; k++) {
+//     cb.store_ref(std::move(refs[k]));
+//   }
+//   TRY_RESULT(res, cb.finalize_novm_nothrow(special));
+//   CHECK(!res.is_null());
+//   if (res->is_special() != special) {
+//     return td::Status::Error("is_special mismatch");
+//   }
+//   if (res->get_level_mask() != level_mask) {
+//     return td::Status::Error("level mask mismatch");
+//   }
+//   return res;
+// }
+
+struct CustomCellSerializationInfo : public CellSerializationInfo {
+  td::Status custom_init(td::Slice data, int ref_byte_size) {
+    if (data.size() < 2) {
+      return td::Status::Error(PSLICE() << "Not enough bytes " << td::tag("got", data.size())
+                                        << td::tag("expected", "at least 2"));
+    }
+    TRY_STATUS(custom_init(data.ubegin()[0], data.ubegin()[1], ref_byte_size));
+    if (data.size() < end_offset) {
+      return td::Status::Error(PSLICE() << "Not enough bytes " << td::tag("got", data.size())
+                                        << td::tag("expected", end_offset));
+    }
+    return td::Status::OK();
+  }
+
+  td::Status custom_init(td::uint8 d1, td::uint8 d2, int ref_byte_size) {
+    refs_cnt = d1 & 7;
+    level_mask = Cell::LevelMask(d1 >> 5);
+    special = (d1 & 8) != 0;
+    with_hashes = (d1 & 16) != 0;
+
+    if (refs_cnt > 4) {
+      if (refs_cnt != 7 || !with_hashes) {
+        return td::Status::Error("Invalid first byte");
+      }
+      refs_cnt = 0;
+      // ...
+      // do not deserialize absent cells!
+      return td::Status::Error("TODO: absent cells");
+    }
+
+    hashes_offset = 2;
+    auto n = level_mask.get_hashes_count();
+    depth_offset = hashes_offset;
+    data_offset = depth_offset;
+    data_len = (d2 >> 1) + (d2 & 1);
+    data_with_bits = (d2 & 1) != 0;
+    refs_offset = data_offset + data_len;
+    end_offset = refs_offset + refs_cnt * ref_byte_size;
+
+    return td::Status::OK();
+  }
+  td::Result<Ref<DataCell>> custom_create_data_cell(td::Slice cell_slice,
+                                                                    td::Span<Ref<Cell>> refs) const {
+    CellBuilder cb;
+    TRY_RESULT(bits, get_bits(cell_slice));
+    cb.store_bits(cell_slice.ubegin() + data_offset, bits);
+    DCHECK(refs_cnt == (td::int64)refs.size());
+    for (int k = 0; k < refs_cnt; k++) {
+      cb.store_ref(std::move(refs[k]));
+    }
+    TRY_RESULT(res, cb.finalize_novm_nothrow(special));
+    CHECK(!res.is_null());
+    if (res->is_special() != special) {
+      return td::Status::Error("is_special mismatch");
+    }
+    if (res->get_level_mask() != level_mask) {
+      return td::Status::Error("level mask mismatch");
+    }
+    return res;
+  }
+};
+
 td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Slice cell_slice,
                                                                td::Span<td::Ref<DataCell>> cells_span) {
   std::array<td::Ref<Cell>, 4> refs_buf;
 
-  CellSerializationInfo cell_info;
   std::cerr << int(cell_slice[0]) << ' ' << uint32_t(cell_slice[1]) << '\n';
-  TRY_STATUS(cell_info.init(cell_slice, info.ref_byte_size));
+  CustomCellSerializationInfo cell_info;
+  // init_cell_info(cell_info, cell_slice[0], cell_slice[1], info.ref_byte_size);
+  TRY_STATUS(cell_info.custom_init(cell_slice, info.ref_byte_size));
   if (cell_info.end_offset != cell_slice.size()) {
     return td::Status::Error("unused space in cell serialization");
   }
@@ -917,7 +1025,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
     refs[k] = cells_span[cell_count - ref_idx - 1];
   }
 
-  return cell_info.create_data_cell(cell_slice, refs);
+  return cell_info.custom_create_data_cell(cell_slice, refs);
 }
 
 td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int max_roots) {
