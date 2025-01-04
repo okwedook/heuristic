@@ -16,6 +16,165 @@
 #include "crypto/vm/boc-writers.h"
 #include "tdutils/td/utils/misc.h"
 
+namespace BWT {
+
+using namespace std;
+
+template<class T>
+inline int sz(const T &x) { return x.size(); }
+#define all(a) a.begin(), a.end()
+#define pb push_back
+using pii = pair<int, int>;
+template<class T>
+inline void sort(T &x) { sort(all(x)); }
+
+template<class T>
+vector<int> suffixarray(T s) {
+    vector<int> val(all(s));
+    auto x = val;
+    sort(x);
+    x.resize(unique(all(x)) - x.begin());
+    for (auto &i : val)
+        i = lower_bound(all(x), i) - x.begin();
+    val.pb(-1);
+    vector<int> p(sz(val));
+    for (int i = 0; i < sz(p); ++i) p[i] = i + 1;
+    p[sz(p) - 1] = sz(p) - 1;
+    int lg = 0;
+    vector<int> ans(sz(s));
+    for (int i = 0; i < sz(ans); ++i) ans[i] = i;
+    sort(all(ans), [&](int i, int j) {
+        return val[i] < val[j];
+    });
+    while ((1 << lg) < sz(val)) {
+        ++lg;
+        int past = 0;
+        for (int i = 0; i < sz(ans); ++i)
+            if (val[ans[i]] != val[ans[past]]) {
+                sort(ans.begin() + past, ans.begin() + i, [&](int i, int j) {
+                    return pii(val[i], val[p[i]]) < pii(val[j], val[p[j]]);
+                });
+                past = i;
+            }
+        sort(ans.begin() + past, ans.end(), [&](int i, int j) {
+            return pii(val[i], val[p[i]]) < pii(val[j], val[p[j]]);
+        });
+        vector<pii> coord;
+        for (auto i : ans) coord.pb({val[i], val[p[i]]});
+        coord.resize(unique(all(coord)) - coord.begin());
+        int ptr = 0;
+        vector<int> newval(sz(ans));
+        newval.pb(-1);
+        for (auto i : ans) {
+            while (coord[ptr] < pii(val[i], val[p[i]])) ++ptr;
+            newval[i] = ptr;
+        }
+        val = newval;
+        for (int i = 0; i < sz(p); ++i)
+            p[i] = p[p[i]];
+    }
+    return ans;
+}
+
+using data_type = int;
+using byte_buffer = std::vector<data_type>;
+static constexpr data_type SPECIAL_SYMBOL = -1;
+
+byte_buffer to_byte_buffer(const td::Slice &data) {
+  BWT::byte_buffer answer;
+  for (auto i : data) {
+    answer.push_back(uint16_t(uint8_t(i)));
+  }
+  return std::move(answer);
+}
+
+td::BufferSlice from_byte_buffer(byte_buffer data) {
+  td::BufferSlice ans(data.size());
+  auto buffer = const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(ans.data()));
+  vm::boc_writers::BufferWriter writer{buffer, buffer + data.size()};
+  for (auto i : data) {
+    writer.store_uint(i, 1);
+  }
+  return std::move(ans);
+}
+
+// Function to perform Burrows-Wheeler Transform
+std::pair<byte_buffer, int> bwt(const byte_buffer &input) {
+    size_t n = input.size();
+    byte_buffer modified_input = input;
+
+    // Append a fictive special symbol (e.g., 0)
+    modified_input.push_back(SPECIAL_SYMBOL); // Null byte as special symbol
+
+    size_t modified_n = modified_input.size();
+
+    // std::vector<byte_buffer> rotations(modified_n);
+    
+    // // Create all rotations of the modified input string
+    // for (size_t i = 0; i < modified_n; ++i) {
+    //     byte_buffer v(modified_input.begin() + i, modified_input.end());
+    //     byte_buffer c(modified_input.begin(), modified_input.begin() + i);
+    //     v.insert(v.end(), c.begin(), c.end());
+    //     rotations[i] = v;
+    // }
+
+    // // Sort the rotations
+    // std::sort(rotations.begin(), rotations.end());
+    // dbg(rotations);
+
+    auto sa = suffixarray(modified_input);
+
+    // Build the BWT output and find the special symbol position
+    byte_buffer bwt_output(modified_n); // Exclude the special symbol from the output
+    size_t special_symbol_pos = 0;
+
+    for (size_t i = 0; i < modified_n; ++i) {
+        data_type value = modified_input[(sa[i] + modified_n - 1) % modified_n];
+        if (value == SPECIAL_SYMBOL) { // Check for the special symbol
+            special_symbol_pos = i;
+        }
+        bwt_output[i] = value;
+    }
+
+    bwt_output.erase(bwt_output.begin() + special_symbol_pos);
+
+    return {bwt_output, special_symbol_pos};
+}
+
+// Function to perform Inverse Burrows-Wheeler Transform
+byte_buffer inverse_bwt(byte_buffer bwt_input, size_t special_symbol_pos) {
+    bwt_input.insert(bwt_input.begin() + special_symbol_pos, SPECIAL_SYMBOL);
+    size_t n = bwt_input.size();
+    std::vector<std::pair<data_type, size_t>> sorted_pairs(n);
+    
+    // Create pairs of (character, original index)
+    for (size_t i = 0; i < n; ++i) {
+        sorted_pairs[i] = {bwt_input[i], i};
+    }
+
+    // Sort pairs by character
+    std::sort(sorted_pairs.begin(), sorted_pairs.end());
+
+    // Build the first column of the table
+    std::vector<uint8_t> first_col(n);
+    for (size_t i = 0; i < n; ++i) {
+        first_col[i] = sorted_pairs[i].first;
+    }
+
+    // Reconstruct the original string using the last column and the sorted pairs
+    byte_buffer original(n);
+    size_t current_index = special_symbol_pos;
+
+    for (size_t i = 0; i < n; ++i) {
+        original[i] = bwt_input[current_index];
+        current_index = sorted_pairs[current_index].second;
+    }
+
+    return {original.begin() + 1, original.end()};
+}
+
+} // namespace BWT
+
 template<class Writer>
 struct BitWriter {
   BitWriter(Writer& _w) : w(_w), bit_value(0), bits(0) {}
@@ -903,20 +1062,38 @@ td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty =
 
 constexpr bool use_lz4 = true;
 
+td::BufferSlice applyBWT(td::Slice data) {
+  auto [bwt_result, special_symbol_pos] = BWT::bwt(BWT::to_byte_buffer(data));
+  BWT::byte_buffer special_sumbol_bytes = {
+    special_symbol_pos & 255,
+    special_symbol_pos >> 8 & 255,
+    special_symbol_pos >> 16 & 255
+  };
+  bwt_result.insert(bwt_result.begin(), special_sumbol_bytes.begin(), special_sumbol_bytes.end());
+  return std::move(BWT::from_byte_buffer(bwt_result));
+}
+
+td::BufferSlice inverseBWT(td::Slice data) {
+  auto ptr = data.ubegin();
+  int special_symbol_pos = (int(ptr[0]) << 0) + (int(ptr[1]) << 8) + (int(ptr[2]) << 16);
+  data.remove_prefix(3);
+  auto inverse_bwt = BWT::inverse_bwt(BWT::to_byte_buffer(data), special_symbol_pos);
+  return std::move(BWT::from_byte_buffer(inverse_bwt));
+}
+
+bool use_bwt = false;
+
 td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
   td::BufferSlice serialized = vm::custom_boc_serialize(root).move_as_ok();
-  return use_lz4 ? td::lz4_compress(serialized) : std::move(serialized);
+  auto with_bwt = use_bwt ? td::BufferSlice(applyBWT(std::move(serialized))) : std::move(serialized);
+  return use_lz4 ? td::lz4_compress(with_bwt) : std::move(with_bwt);
 }
 
 td::BufferSlice decompress(td::Slice data) {
-  vm::Ref<vm::Cell> root;
-  if (use_lz4) {
-    td::BufferSlice serialized = td::lz4_decompress(data, 2 << 20).move_as_ok();
-    root = vm::custom_boc_deserialize(serialized).move_as_ok();
-  } else {
-    root = vm::custom_boc_deserialize(data).move_as_ok();
-  }
+  auto decompressed = use_lz4 ? td::lz4_decompress(data, 2 << 20).move_as_ok() : td::BufferSlice(data);
+  auto without_bwt = use_bwt ? inverseBWT(std::move(decompressed)) : std::move(decompressed);
+  vm::Ref<vm::Cell> root = vm::custom_boc_deserialize(without_bwt).move_as_ok();
   return vm::std_boc_serialize(root, 31).move_as_ok();
 }
 
