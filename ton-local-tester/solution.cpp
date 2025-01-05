@@ -15,6 +15,7 @@
 #include "block/block-auto.h"
 #include "crypto/vm/boc-writers.h"
 #include "tdutils/td/utils/misc.h"
+#include "tdutils/td/utils/Gzip.h"
 
 namespace BWT {
 
@@ -1149,7 +1150,7 @@ enum class FinalCompression {
   DEFLATE
 };
 
-static constexpr enum FinalCompression final_compression = FinalCompression::LZ4;
+static constexpr enum FinalCompression final_compression = FinalCompression::DEFLATE;
 
 td::BufferSlice apply_final_compression(td::Slice data) {
   switch (final_compression) {
@@ -1157,6 +1158,8 @@ td::BufferSlice apply_final_compression(td::Slice data) {
       return td::BufferSlice(data);
     case FinalCompression::LZ4:
       return td::lz4_compress(data);
+    case FinalCompression::DEFLATE:
+      return td::gzencode(data, 2);
     default:
       throw std::invalid_argument("Unknown compression type");
   }
@@ -1168,12 +1171,12 @@ td::BufferSlice invert_final_compression(td::Slice data) {
       return td::BufferSlice(data);
     case FinalCompression::LZ4:
       return td::lz4_decompress(data, 2 << 20).move_as_ok();
+    case FinalCompression::DEFLATE:
+      return td::gzdecode(data);
     default:
       throw std::invalid_argument("Unknown compression type");
   }
 }
-
-constexpr bool use_lz4 = true;
 
 td::BufferSlice applyBWT(td::Slice data) {
   auto [bwt_result, special_symbol_pos] = BWT::bwt(BWT::to_byte_buffer(data));
