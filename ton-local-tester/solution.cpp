@@ -816,7 +816,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       int k = cell_count - 1 - dc_info.ref_idx[j];
       std::cerr << "Link from " << i << " to " << k << '\n';
       DCHECK(k > i && k < cell_count);
-      store_ref(k - i);
+      store_ref(k - i - 1);
     }
     auto end_position = writer.position();
     std::cerr << "Cell position " << start_position << ' ' << end_position << '\n';
@@ -1020,7 +1020,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
 
   auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
   for (int k = 0; k < cell_info.refs_cnt; k++) {
-    int ref_idx = idx + (int)read_ref();
+    int ref_idx = idx + 1 + (int)read_ref();
     if (ref_idx <= idx) {
       return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
                                         << " is to cell #" << ref_idx << " with smaller index");
