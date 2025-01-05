@@ -1143,6 +1143,36 @@ td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty =
 
 } // namespace vm
 
+enum class FinalCompression {
+  ORIGINAL,
+  LZ4,
+  DEFLATE
+};
+
+static constexpr enum FinalCompression final_compression = FinalCompression::LZ4;
+
+td::BufferSlice apply_final_compression(td::Slice data) {
+  switch (final_compression) {
+    case FinalCompression::ORIGINAL:
+      return td::BufferSlice(data);
+    case FinalCompression::LZ4:
+      return td::lz4_compress(data);
+    default:
+      throw std::invalid_argument("Unknown compression type");
+  }
+}
+
+td::BufferSlice invert_final_compression(td::Slice data) {
+  switch (final_compression) {
+    case FinalCompression::ORIGINAL:
+      return td::BufferSlice(data);
+    case FinalCompression::LZ4:
+      return td::lz4_decompress(data, 2 << 20).move_as_ok();
+    default:
+      throw std::invalid_argument("Unknown compression type");
+  }
+}
+
 constexpr bool use_lz4 = true;
 
 td::BufferSlice applyBWT(td::Slice data) {
@@ -1170,11 +1200,11 @@ td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
   td::BufferSlice serialized = vm::custom_boc_serialize(root).move_as_ok();
   auto with_bwt = use_bwt ? td::BufferSlice(applyBWT(std::move(serialized))) : std::move(serialized);
-  return use_lz4 ? td::lz4_compress(with_bwt) : std::move(with_bwt);
+  return apply_final_compression(std::move(with_bwt));
 }
 
 td::BufferSlice decompress(td::Slice data) {
-  auto decompressed = use_lz4 ? td::lz4_decompress(data, 2 << 20).move_as_ok() : td::BufferSlice(data);
+  auto decompressed = invert_final_compression(data);
   auto without_bwt = use_bwt ? inverseBWT(std::move(decompressed)) : std::move(decompressed);
   vm::Ref<vm::Cell> root = vm::custom_boc_deserialize(without_bwt).move_as_ok();
   return vm::std_boc_serialize(root, 31).move_as_ok();
