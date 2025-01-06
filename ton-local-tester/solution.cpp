@@ -349,15 +349,14 @@ static const std::map<std::string, distribution_data> huffman_data = {
 };
 
 struct HuffmanEncoder {
-  HuffmanEncoder(const distribution_data& data) {
+  HuffmanEncoder(const distribution_data& data, const std::string name) {
     set_data(data);
     #ifndef ONLINE_JUDGE
-      eval_data(data);
+      eval_data(data, name);
     #endif
+    build_index();
   }
-  void eval_data(const distribution_data& data) {
-    msg("Eval data");
-    dbg(code_len);
+  void eval_data(const distribution_data& data, const std::string name) {
     long long uncompressed = 0, compressed = 0;
     for (auto [count, value] : data) {
       auto [_, len] = code_len.at(value);
@@ -365,19 +364,31 @@ struct HuffmanEncoder {
       compressed += len * count;
     }
     auto compression_ratio = uncompressed * 1.0 / compressed;
-    msg("Huffman encoder data: ", debug::dbgout(uncompressed, compressed, compression_ratio));
+    msg("Huffman encoder data for ", name, ": ", debug::dbgout(uncompressed, compressed, compression_ratio));
   }
-  // template<class Writer>
-  // void write(BitWriter<Writer>& bwriter, int value) const {
-  //   auto [code, len] = code_len.at(value);
-  //   bwriter.write_bits(code, len);
-  // }
-  // int read(BitReader& breader) const {
-  //   uint64_t 
-  //   for (int b = 0; b < 64; ++b) {
-
-  //   }
-  // }
+  template<class Writer>
+  void write(BitWriter<Writer>& bwriter, int value) const {
+    auto [code, len] = code_len.at(value);
+    msg("Huffman write ", code, ' ', len, ' ', value);
+    bwriter.write_bits(code, len);
+  }
+  int read(BitReader& breader) const {
+    uint64_t code = 0;
+    for (int b = 0; b < 64; ++b) {
+      code |= static_cast<uint64_t>(breader.read_bit()) << b;
+      // code = (code << 1) + breader.read_bit();
+      auto it = code_index.find({code, b + 1});
+      if (it != code_index.end()) {
+        dbg(it->first, it->second);
+        msg("Huffman read ", code, ' ', b + 1, ' ', it->second);
+        return it->second;
+      }
+    }
+    throw std::runtime_error("Read 64 bits but haven't found a match in Huffman Encoder");
+  }
+  int get_len(int value) const {
+    return code_len.at(value).second;
+  }
 protected:
   void set_data(const distribution_data& data) {
     DCHECK(data.size() > 1);
@@ -398,17 +409,25 @@ protected:
       by_cnt.push_back({c1, v1});
     }
   }
-  std::map<int, std::pair<uint64_t, int>> code_len;
 private:
+  std::map<int, std::pair<uint64_t, int>> code_len;
+  std::map<std::pair<uint64_t, int>, int> code_index;
+  void build_index() {
+    for (auto [value, c_l] : code_len) {
+      auto [code, len] = c_l;
+      dbg(code, len, value);
+      code_index[{code, len}] = value;
+    }
+  }
   void add_bit(int value, int bit) {
     auto& [code, len] = code_len[value];
-    code = (code << 1) + bit;
+    code = (code << 1) | bit;
     ++len;
   }
 };
 
-static const HuffmanEncoder d1(huffman_data.at("d1"));
-static const HuffmanEncoder d2(huffman_data.at("d2"));
+static const HuffmanEncoder d1(huffman_data.at("d1"), "d1");
+static const HuffmanEncoder d2(huffman_data.at("d2"), "d2");
 
 } // namespace huffman
 
@@ -463,10 +482,7 @@ struct CustomCellSerializationInfo : public CellSerializationInfo {
       return td::Status::Error("TODO: absent cells");
     }
 
-    hashes_offset = 2;
-    auto n = level_mask.get_hashes_count();
-    depth_offset = hashes_offset;
-    data_offset = depth_offset;
+    data_offset = (huffman::d1.get_len(d1) + huffman::d2.get_len(d2) + 7) / 8;
     data_len = (d2 >> 1) + (d2 & 1);
     data_with_bits = (d2 & 1) != 0;
     refs_offset = data_offset + data_len;
@@ -771,7 +787,10 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     msg("Cell serialized size = ", s);
     msg("Cell d1, d2 = ", uint16_t(buf[0]), ' ', uint16_t(buf[1]));
     // writer.store_bytes(buf, s);
-    for (int i = 0; i < s; ++i) {
+    huffman::d1.write(bwriter, buf[0]);
+    huffman::d2.write(bwriter, buf[1]);
+    bwriter.flush_byte();
+    for (int i = 2; i < s; ++i) {
       // std::cerr << "Saving byte " << uint16_t(buf[i]) << '\n';
       bwriter.write_bits(buf[i], 8);
     }
@@ -967,8 +986,9 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   auto start_position = breader.flush_and_get_ptr();
   for (int i = 0; i < cell_count; i++) {
     CustomCellSerializationInfo cell_info;
-    auto d1 = breader.read_bits(8);
-    auto d2 = breader.read_bits(8);
+    auto d1 = huffman::d1.read(breader);
+    auto d2 = huffman::d2.read(breader);
+    breader.flush_byte();
     add_char("d1", d1);
     add_char("d2", d2);
     dbg(d1, d2);
