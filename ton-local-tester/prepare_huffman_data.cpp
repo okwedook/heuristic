@@ -175,6 +175,7 @@ signed main() {
         st_data.push_back({cnt, value});
       }
       rsort(st_data);
+      if (sz(st_data) > 256) st_data.resize(256);
       auto x = make_pair(name, st_data);
       cout << pdbg(x) << ",\n";
     }

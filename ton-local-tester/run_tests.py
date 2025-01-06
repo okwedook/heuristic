@@ -50,8 +50,9 @@ for i, test_file in enumerate(test_files):
         result = subprocess.run("./solution", input="compress\n" + original_block, text=True,
                                 timeout=2.0, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
         encode_stderr = result.stderr
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
         print(f"{Fore.RED}TL timeout expired{Style.RESET_ALL}")
+        print(e.stderr.decode())
         continue
     if result.returncode != 0:
         print(f"{Fore.RED}RE exitcode={result.returncode}{Style.RESET_ALL}")

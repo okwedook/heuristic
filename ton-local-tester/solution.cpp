@@ -332,6 +332,12 @@ struct BitReader {
       bit_index = 0;
     }
   }
+  const td::Slice& get_data() const {
+    return data;
+  }
+  int get_ptr() const {
+    return ptr;
+  }
 private:
   const td::Slice& data;
   int ptr;
@@ -346,11 +352,14 @@ using distribution_data = std::vector<std::pair<long long, int>>;
 static const std::map<std::string, distribution_data> huffman_data = {
 {"d1",{{28830,34},{14507,40},{7208,2},{4894,0},{4687,1},{1514,33},{1297,3},{570,35},{97,4},{84,8},{25,10},{24,36},{6,9},{0,255},{0,254},{0,253},{0,252},{0,251},{0,250},{0,249},{0,248},{0,247},{0,246},{0,245},{0,244},{0,243},{0,242},{0,241},{0,240},{0,239},{0,238},{0,237},{0,236},{0,235},{0,234},{0,233},{0,232},{0,231},{0,230},{0,229},{0,228},{0,227},{0,226},{0,225},{0,224},{0,223},{0,222},{0,221},{0,220},{0,219},{0,218},{0,217},{0,216},{0,215},{0,214},{0,213},{0,212},{0,211},{0,210},{0,209},{0,208},{0,207},{0,206},{0,205},{0,204},{0,203},{0,202},{0,201},{0,200},{0,199},{0,198},{0,197},{0,196},{0,195},{0,194},{0,193},{0,192},{0,191},{0,190},{0,189},{0,188},{0,187},{0,186},{0,185},{0,184},{0,183},{0,182},{0,181},{0,180},{0,179},{0,178},{0,177},{0,176},{0,175},{0,174},{0,173},{0,172},{0,171},{0,170},{0,169},{0,168},{0,167},{0,166},{0,165},{0,164},{0,163},{0,162},{0,161},{0,160},{0,159},{0,158},{0,157},{0,156},{0,155},{0,154},{0,153},{0,152},{0,151},{0,150},{0,149},{0,148},{0,147},{0,146},{0,145},{0,144},{0,143},{0,142},{0,141},{0,140},{0,139},{0,138},{0,137},{0,136},{0,135},{0,134},{0,133},{0,132},{0,131},{0,130},{0,129},{0,128},{0,127},{0,126},{0,125},{0,124},{0,123},{0,122},{0,121},{0,120},{0,119},{0,118},{0,117},{0,116},{0,115},{0,114},{0,113},{0,112},{0,111},{0,110},{0,109},{0,108},{0,107},{0,106},{0,105},{0,104},{0,103},{0,102},{0,101},{0,100},{0,99},{0,98},{0,97},{0,96},{0,95},{0,94},{0,93},{0,92},{0,91},{0,90},{0,89},{0,88},{0,87},{0,86},{0,85},{0,84},{0,83},{0,82},{0,81},{0,80},{0,79},{0,78},{0,77},{0,76},{0,75},{0,74},{0,73},{0,72},{0,71},{0,70},{0,69},{0,68},{0,67},{0,66},{0,65},{0,64},{0,63},{0,62},{0,61},{0,60},{0,59},{0,58},{0,57},{0,56},{0,55},{0,54},{0,53},{0,52},{0,51},{0,50},{0,49},{0,48},{0,47},{0,46},{0,45},{0,44},{0,43},{0,42},{0,41},{0,39},{0,38},{0,37},{0,32},{0,31},{0,30},{0,29},{0,28},{0,27},{0,26},{0,25},{0,24},{0,23},{0,22},{0,21},{0,20},{0,19},{0,18},{0,17},{0,16},{0,15},{0,14},{0,13},{0,12},{0,11},{0,7},{0,6},{0,5}}},
 {"d2",{{14521,72},{9099,15},{7528,17},{7104,13},{4147,11},{3057,1},{1378,9},{1031,105},{971,130},{909,111},{845,113},{820,19},{777,181},{772,7},{657,177},{558,81},{391,171},{385,67},{348,158},{284,75},{278,89},{277,163},{248,21},{214,161},{212,149},{210,151},{210,23},{210,3},{183,104},{156,175},{154,33},{153,201},{143,153},{143,115},{139,66},{134,152},{134,69},{131,225},{123,135},{120,109},{117,157},{111,156},{111,20},{110,97},{110,73},{109,150},{101,10},{94,91},{91,87},{90,25},{87,147},{86,12},{83,99},{76,16},{74,155},{73,162},{72,112},{66,154},{65,107},{64,80},{60,102},{59,179},{59,169},{55,98},{53,2},{49,121},{49,18},{48,47},{45,5},{43,8},{42,117},{42,65},{41,100},{41,27},{40,160},{38,197},{38,183},{37,229},{36,148},{35,88},{35,68},{34,217},{33,131},{33,37},{32,170},{30,138},{30,14},{29,176},{29,145},{29,143},{29,103},{29,74},{28,173},{28,137},{28,95},{28,94},{27,219},{27,185},{26,178},{25,247},{25,203},{25,172},{24,254},{24,244},{23,222},{23,32},{22,159},{22,55},{22,0},{21,233},{21,174},{21,79},{21,77},{21,26},{21,24},{20,180},{20,110},{20,85},{19,192},{19,167},{19,141},{19,76},{18,235},{17,191},{17,122},{17,71},{17,31},{16,255},{16,83},{15,246},{15,168},{15,132},{15,119},{14,35},{13,251},{13,242},{13,195},{13,165},{13,30},{13,4},{12,230},{12,215},{12,133},{12,114},{12,70},{11,241},{11,227},{11,127},{11,108},{11,22},{10,128},{10,124},{10,123},{10,101},{10,51},{10,34},{10,29},{9,231},{9,182},{9,126},{9,106},{9,38},{8,249},{8,248},{8,220},{8,142},{8,118},{8,64},{8,57},{8,53},{8,28},{7,236},{7,234},{7,208},{7,205},{7,193},{7,129},{7,120},{6,213},{6,202},{6,92},{6,78},{5,252},{5,243},{5,223},{5,212},{5,204},{5,200},{5,166},{5,139},{5,58},{5,56},{5,40},{4,245},{4,221},{4,216},{4,214},{4,209},{4,199},{4,194},{4,189},{4,86},{4,50},{4,46},{4,44},{4,6},{3,226},{3,210},{3,116},{3,96},{3,82},{3,61},{3,60},{3,48},{3,42},{3,39},{2,253},{2,238},{2,224},{2,196},{2,190},{2,187},{2,146},{2,144},{2,140},{2,136},{2,90},{2,84},{2,49},{2,45},{2,36},{1,250},{1,240},{1,232},{1,228},{1,218},{1,211},{1,206},{1,198},{1,184},{1,164},{1,134},{1,93},{1,62},{1,59},{1,54},{1,52},{0,239},{0,237},{0,207},{0,188},{0,186},{0,125},{0,63},{0,43},{0,41}}},
+{"ref_diff",{{22819,0},{20114,1},{11193,2},{1646,3},{692,4},{575,5},{503,6},{446,7},{360,8},{318,9},{307,10},{270,11},{239,12},{208,13},{196,14},{187,15},{158,16},{117,20},{117,17},{114,19},{106,21},{103,18},{99,23},{97,22},{83,25},{81,31},{80,26},{78,24},{74,27},{71,28},{67,30},{65,29},{59,32},{58,35},{52,36},{46,37},{43,34},{42,33},{38,38},{36,45},{36,39},{34,46},{33,48},{33,44},{32,49},{32,40},{31,42},{29,66},{29,58},{29,41},{27,54},{26,519},{26,163},{26,57},{25,154},{25,129},{25,47},{24,603},{24,150},{24,124},{24,67},{24,65},{24,55},{24,43},{23,158},{23,115},{23,92},{23,68},{22,909},{22,241},{22,221},{22,156},{22,155},{22,144},{22,127},{22,125},{22,76},{22,53},{21,656},{21,210},{21,178},{21,170},{21,147},{21,133},{21,108},{21,101},{21,71},{21,70},{21,63},{21,61},{21,59},{20,904},{20,874},{20,854},{20,843},{20,623},{20,268},{20,258},{20,226},{20,222},{20,196},{20,177},{20,157},{20,142},{20,140},{20,120},{20,119},{20,116},{20,114},{20,113},{20,112},{20,90},{20,52},{19,841},{19,649},{19,613},{19,564},{19,229},{19,193},{19,167},{19,162},{19,152},{19,137},{19,131},{19,109},{19,94},{19,91},{19,73},{19,72},{19,69},{19,62},{19,60},{18,1089},{18,1053},{18,1044},{18,956},{18,890},{18,764},{18,664},{18,638},{18,626},{18,625},{18,604},{18,584},{18,507},{18,440},{18,356},{18,341},{18,291},{18,262},{18,238},{18,227},{18,204},{18,186},{18,166},{18,160},{18,159},{18,136},{18,135},{18,93},{18,88},{18,85},{18,80},{18,74},{18,51},{18,50},{17,963},{17,950},{17,940},{17,905},{17,851},{17,849},{17,660},{17,640},{17,621},{17,615},{17,552},{17,394},{17,370},{17,337},{17,244},{17,225},{17,208},{17,201},{17,194},{17,188},{17,184},{17,179},{17,164},{17,148},{17,132},{17,107},{17,102},{17,98},{17,97},{17,89},{17,79},{17,78},{17,75},{17,56},{16,1176},{16,1086},{16,1042},{16,977},{16,967},{16,958},{16,943},{16,918},{16,915},{16,865},{16,862},{16,855},{16,674},{16,631},{16,628},{16,624},{16,619},{16,605},{16,594},{16,581},{16,541},{16,522},{16,521},{16,492},{16,489},{16,475},{16,458},{16,425},{16,421},{16,387},{16,360},{16,342},{16,326},{16,272},{16,248},{16,213},{16,199},{16,195},{16,165},{16,146},{16,128},{16,126},{16,123},{16,122},{16,104},{16,83},{15,1360},{15,1311},{15,1303},{15,1281},{15,1181},{15,1179},{15,1138},{15,1114},{15,1094},{15,1092}}},
 };
 
 struct HuffmanEncoder {
   HuffmanEncoder() {}
   HuffmanEncoder(const distribution_data& data, const std::string name) {
+    msg("HERE");
+    dbg(data);
     set_data(data);
     #ifndef ONLINE_JUDGE
       eval_data(data, name);
@@ -359,6 +368,7 @@ struct HuffmanEncoder {
   }
   void eval_data(const distribution_data& data, const std::string name) {
     long long uncompressed = 0, compressed = 0;
+    dbg(data);
     for (auto [count, value] : data) {
       auto [_, len] = code_len.at(value);
       uncompressed += 8 * count;
@@ -389,6 +399,9 @@ struct HuffmanEncoder {
   int get_len(int value) const {
     return code_len.at(value).second;
   }
+  bool have_value(int value) const {
+    return code_len.count(value);
+  }
 protected:
   void set_data(const distribution_data& data) {
     DCHECK(data.size() > 1);
@@ -396,6 +409,7 @@ protected:
     for (auto [cnt, value] : data) {
       by_cnt.push_back({cnt, {value}});
     }
+    // TODO: improve performance for bigger data
     while (by_cnt.size() > 1) {
       std::sort(by_cnt.begin(), by_cnt.end(), [](auto lhs, auto rhs) {
         if (lhs.first != rhs.first) return lhs.first > rhs.first;
@@ -431,28 +445,51 @@ private:
 };
 
 
-// struct HuffmanEncoderWithDefault {
-//   HuffmanEncoderWithDefault(distribution_data data, int _special, std::pair<int, int> range, const std::string& name)
-//     : special(_special)
-//     , min_value(range.first)
-//     , extra_bits {
-//     for (auto [count, value] : data) {
-//       DCHECK(value != special);
-//     }
-//     data.push_back({0, special});
-//     encoder = HuffmanEncoder(data, name);
-//   }
+struct HuffmanEncoderWithDefault {
+  HuffmanEncoderWithDefault(distribution_data data, int _special, std::pair<int, int> range, const std::string& name)
+  : special(_special)
+  , min_value(range.first)
+  , extra_bits(std::ceil(std::log2(range.second - range.first))) {
+    dbg(special, min_value, extra_bits);
+    for (auto [count, value] : data) {
+      DCHECK(value != special);
+    }
+    data.push_back({0, special});
+    encoder = HuffmanEncoder(data, name);
+  }
+
+  template<class Writer>
+  void write(BitWriter<Writer>& bwriter, int value) const {
+    DCHECK(value != special);
+    if (encoder.have_value(value)) {
+      encoder.write(bwriter, value);
+    } else {
+      DCHECK(min_value <= value && value < min_value + (1 << extra_bits));
+      encoder.write(bwriter, special);
+      bwriter.write_bits(value - min_value, extra_bits);
+    }
+  }
+  int read(BitReader& breader) const {
+    auto value = encoder.read(breader);
+    if (value != special) return value;
+    return int(breader.read_bits(extra_bits)) + min_value;
+  }
+  int get_len(int value) const {
+    DCHECK(value != special);
+    return encoder.have_value(value) ? encoder.get_len(value) : encoder.get_len(special) + extra_bits;
+  }
 
 
-// private:
-//   HuffmanEncoder encoder;
-//   int special;
-//   int min_value;
-//   int extra_bits;
-// };
+private:
+  HuffmanEncoder encoder;
+  int special;
+  int min_value;
+  int extra_bits;
+};
 
 static const HuffmanEncoder d1(huffman_data.at("d1"), "d1");
 static const HuffmanEncoder d2(huffman_data.at("d2"), "d2");
+static const HuffmanEncoderWithDefault ref_diff(huffman_data.at("ref_diff"), -1, {0, 100000}, "ref_diff");
 
 } // namespace huffman
 
@@ -460,8 +497,7 @@ namespace vm {
 
 
 struct CustomCellSerializationInfo : public CellSerializationInfo {
-
-  td::Result<int> custom_get_bits(td::Slice cell) const {
+  td::Result<int> custom_get_bits(td::Slice cell_data) const {
       if (data_with_bits) {
         // for (int i = 0; i <= data_offset + data_len - 1; ++i) {
         //   std::cerr << uint16_t(uint8_t(cell[i])) << ' ';
@@ -469,7 +505,7 @@ struct CustomCellSerializationInfo : public CellSerializationInfo {
         // std::cerr << '\n';
         // std::cerr << "Data offsets " << data_offset << ' ' << data_len << '\n';
         DCHECK(data_len != 0);
-        int last = cell[data_offset + data_len - 1];
+        int last = cell_data[data_len - 1];
         if (!(last & 0x7f)) {
           return td::Status::Error("overlong encoding");
         }
@@ -507,10 +543,8 @@ struct CustomCellSerializationInfo : public CellSerializationInfo {
       return td::Status::Error("TODO: absent cells");
     }
 
-    data_offset = (huffman::d1.get_len(d1) + huffman::d2.get_len(d2) + refs_cnt * ref_bit_size + 7) / 8;
     data_len = (d2 >> 1) + (d2 & 1);
     data_with_bits = (d2 & 1) != 0;
-    end_offset = data_offset + data_len;
 
     return td::Status::OK();
   }
@@ -670,7 +704,7 @@ class CustomBagOfCells {
   unsigned long long get_idx_entry(int index);
   bool get_cache_entry(int index);
   td::Result<td::Slice> get_cell_slice(int index, td::Slice data);
-  td::Result<td::Ref<vm::DataCell>> deserialize_cell(int idx, td::Slice cell_slice, td::Span<td::Ref<DataCell>> cells, BitReader& breader, CustomCellSerializationInfo& cell_info);
+  td::Result<td::Ref<vm::DataCell>> deserialize_cell(int idx, td::Span<td::Ref<DataCell>> cells, BitReader& breader, CustomCellSerializationInfo& cell_info);
 };
 
 // unsigned long long CustomBagOfCells::Info::read_int(const unsigned char* ptr, unsigned bytes) {
@@ -794,7 +828,10 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       int k = cell_count - 1 - dc_info.ref_idx[j];
       msg("Link from ", i, " to ", k);
       DCHECK(k > i && k < cell_count);
-      store_ref(k - i - 1);
+      int ref_diff = k - i - 1;
+      ++byte_cnt["ref_diff"][ref_diff];
+      // huffman::ref_diff.write(bwriter, ref_diff);
+      store_ref(ref_diff);
     }
     bwriter.flush_byte();
     for (int i = 2; i < s; ++i) {
@@ -879,23 +916,17 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   }
 }
 
-td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Slice cell_slice,
-                                                               td::Span<td::Ref<DataCell>> cells_span, BitReader& breader, CustomCellSerializationInfo& cell_info) {
+td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Span<td::Ref<DataCell>> cells_span,
+                                                                     BitReader& breader, CustomCellSerializationInfo& cell_info) {
   std::array<td::Ref<Cell>, 4> refs_buf;
-
-  if (cell_info.end_offset != cell_slice.size()) {
-    return td::Status::Error("unused space in cell serialization");
-  }
 
   dbg(cell_info.refs_cnt);
 
-  auto read_ref = [&]() -> uint64_t {
-    return breader.read_bits(info.ref_bit_size);
-  };
-
   auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
   for (int k = 0; k < cell_info.refs_cnt; k++) {
-    int ref_idx = idx + 1 + (int)read_ref();
+    // int ref_diff = huffman::ref_diff.read(breader);
+    int ref_diff = breader.read_bits(info.ref_bit_size);
+    int ref_idx = idx + 1 + ref_diff;
     if (ref_idx <= idx) {
       return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
                                         << " is to cell #" << ref_idx << " with smaller index");
@@ -911,6 +942,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
   breader.flush_byte();
 
   CellBuilder cb;
+  auto cell_slice = breader.get_data().substr(breader.get_ptr(), cell_info.data_len);
   TRY_RESULT(bits, cell_info.custom_get_bits(cell_slice));
   msg("Cell bits size = ", bits);
   // for (int i = 0; i < bits; ++i) {
@@ -987,18 +1019,10 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
       return td::Status::Error(PSLICE()
                                 << "invalid bag-of-cells failed to deserialize cell #" << i << " " << status.error());
     }
-    dbg(start_position, start_position + cell_info.end_offset);
-    auto cell_slice = data.substr(start_position, cell_info.end_offset);
-    dbg(cell_slice.size());
-    // for (int i = 0; i < cell_slice.size(); ++i) {
-    //   std::cerr << uint16_t(uint8_t(cell_slice[i])) << ' ';
-    // }
-    // std::cerr << '\n';
-    start_position += cell_info.end_offset;
     // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
     msg("Loading cell with idx ", idx);
-    auto r_cell = deserialize_cell(idx, cell_slice, cell_list, breader, cell_info);
+    auto r_cell = deserialize_cell(idx, cell_list, breader, cell_info);
     if (r_cell.is_error()) {
       return td::Status::Error(PSLICE() << "invalid bag-of-cells failed to deserialize cell #" << idx << " "
                                         << r_cell.error());
