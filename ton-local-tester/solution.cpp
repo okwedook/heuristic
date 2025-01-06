@@ -665,7 +665,7 @@ class CustomBagOfCells {
     cells.clear();
     cell_list_.clear();
   }
-  td::uint64 compute_sizes(int& r_size, int& o_size);
+  td::uint64 compute_sizes(int& r_size);
   void reorder_cells();
   int revisit(int cell_idx, int force = 0);
   unsigned long long get_idx_entry_raw(int index);
@@ -702,9 +702,8 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
   has_index = false;
   has_cache_bits = false;
   ref_bit_size = 0;
-  offset_bit_size = 0;
-  root_count = cell_count = absent_count = -1;
-  index_offset = data_offset = data_size = total_size = 0;
+  root_count = cell_count = -1;
+  index_offset = data_offset = total_size = 0;
   if (magic != boc_generic && magic != boc_idx && magic != boc_idx_crc32c) {
     magic = 0;
     return 0;
@@ -721,17 +720,10 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
   //   return -7 - 3 * ref_bit_size;
   // }
   // offset_bit_size = ptr[1];
-  offset_bit_size = breader.read_bits(5);
 
-  dbg(ref_bit_size, offset_bit_size);
-  if (offset_bit_size > 4 * 8 || offset_bit_size < 1) {
-    return 0;
-  }
+  dbg(ref_bit_size);
   auto read_ref = [&]() -> uint64_t {
     return breader.read_bits(ref_bit_size);
-  };
-  auto read_offset = [&]() -> uint64_t {
-    return breader.read_bits(offset_bit_size);
   };
   cell_count = (int)read_ref();
   if (cell_count <= 0) {
@@ -744,17 +736,6 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
     return 0;
   }
   has_roots = true;
-  absent_count = (int)read_ref();
-  if (absent_count < 0 || absent_count > cell_count) {
-    return 0;
-  }
-  data_size = read_offset();
-  if (data_size > ((unsigned long long)cell_count << 10)) {
-    return 0;
-  }
-  if (data_size > (1ull << 40)) {
-    return 0;  // bag of cells with more than 1TiB data is unlikely
-  }
   valid = true;
 
   return 1;
@@ -777,7 +758,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   BitWriter bwriter(writer);
   msg("Running custom serialize impl");
   auto store_ref = [&](unsigned long long value) { bwriter.write_bits(value, info.ref_bit_size); };
-  auto store_offset = [&](unsigned long long value) { bwriter.write_bits(value, info.offset_bit_size); };
 
   td::uint8 byte{0};
   // 3, 4 - flags
@@ -786,12 +766,8 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   }
   bwriter.write_bits(info.ref_bit_size, 5);
 
-  bwriter.write_bits(info.offset_bit_size, 5);
-
   store_ref(cell_count);
   store_ref(root_count);
-  store_ref(0);
-  store_offset(info.data_size);
   for (const auto& root_info : roots) {
     int k = cell_count - 1 - root_info.idx;
     DCHECK(k >= 0 && k < cell_count);
@@ -839,49 +815,39 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 }
 
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
-td::uint64 CustomBagOfCells::compute_sizes(int& r_size, int& o_size) {
-  int rs = 0, os = 0;
+td::uint64 CustomBagOfCells::compute_sizes(int& r_size) {
+  int rs = 0;
   if (!root_count || !data_bytes) {
-    r_size = o_size = 0;
+    r_size = 0;
     return 0;
   }
   while (cell_count >= (1LL << rs)) {
     rs++;
   }
   td::uint64 data_bytes_adj = data_bytes + (unsigned long long)int_refs * ((rs + 7) / 8);
-  td::uint64 max_offset = data_bytes_adj;
-  while (max_offset >= (1ULL << os)) {
-    os++;
-  }
-  if (rs > 4 * 8 || os > 4 * 8) {
-    r_size = o_size = 0;
+  if (rs > 4 * 8) {
+    r_size = 0;
     return 0;
   }
   r_size = rs;
-  o_size = os;
   return data_bytes_adj;
 }
 
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 std::size_t CustomBagOfCells::estimate_serialized_size() {
-  auto data_bytes_adj = compute_sizes(info.ref_bit_size, info.offset_bit_size);
-  dbg(info.ref_bit_size, info.offset_bit_size);
+  auto data_bytes_adj = compute_sizes(info.ref_bit_size);
+  dbg(info.ref_bit_size);
   if (!data_bytes_adj) {
     info.invalidate();
     return 0;
   }
   info.valid = true;
-  info.has_crc32c = false;
-  info.has_index = false;
-  info.has_cache_bits = false;
   info.root_count = root_count;
   info.cell_count = cell_count;
-  info.absent_count = dangle_count;
-  info.roots_offset = 0 + 1 + 0 + 3 * ((info.ref_bit_size + 7) / 8) + (info.offset_bit_size + 7) / 8;
+  info.roots_offset = 0 + 1 + 0 + ((2 * info.ref_bit_size + 7) / 8);
   info.index_offset = info.roots_offset + info.root_count * (info.ref_bit_size + 7) / 8;
   info.data_offset = info.index_offset;
   info.magic = Info::boc_generic;
-  info.data_size = data_bytes_adj;
   info.total_size = info.data_offset + data_bytes_adj;
   auto res = td::narrow_cast_safe<size_t>(info.total_size);
   if (res.is_error()) {
@@ -1045,7 +1011,6 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   auto end_offset = breader.flush_and_get_ptr();
   index_ptr = nullptr;
   root_count = info.root_count;
-  dangle_count = info.absent_count;
   for (auto& root_info : roots) {
     root_info.cell = cell_list[root_info.idx];
   }
