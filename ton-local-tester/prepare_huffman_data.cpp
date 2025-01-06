@@ -159,21 +159,24 @@ template<class ...T> void println(const T&... u) { print(u..., '\n'); }
 #endif
 
 signed main() {
-    freopen("res/raw_huffman_data.txt", "r", stdin);
-    freopen("res/prepared_huffman_data.txt", "w", stdout);
+    std::ignore = freopen("res/raw_huffman_data.txt", "r", stdin);
+    std::ignore = freopen("res/prepared_huffman_data.txt", "w", stdout);
     map<string, map<int, ll>> byte_cnt;
     string name;
     int value, cnt;
     while (cin >> name >> value >> cnt) {
         byte_cnt[name][value] += cnt;
     }
+    cout << "{\n";
     for (auto &[name, data] : byte_cnt) {
-      std::vector<std::pair<int, int>> st_data(data.begin(), data.end());
-      std::sort(st_data.begin(), st_data.end(), [&](auto a, auto b) {
-        return a.second > b.second;
-      });
+      vector<pair<ll, int>> st_data;
+      for (auto [value, cnt] : data) {
+        st_data.push_back({cnt, value});
+      }
+      rsort(st_data);
       auto x = make_pair(name, st_data);
       cout << pdbg(x) << ",\n";
     }
+    cout << "};\n";
     return 0;
 }
