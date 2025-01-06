@@ -169,7 +169,9 @@ signed main() {
     }
     cout << "{\n";
     for (auto &[name, data] : byte_cnt) {
-      for (int i = 0; i < 256; ++i) data[i];
+      if (name != "d1") {
+        for (int i = 0; i < 256; ++i) data[i];
+      }
       vector<pair<ll, int>> st_data;
       for (auto [value, cnt] : data) {
         st_data.push_back({cnt, value});

@@ -99,6 +99,29 @@ void add_char(const std::string& name, unsigned char value) {
   };
 #endif
 
+namespace log_level {
+  enum class LOG_LEVEL {
+    ALWAYS = 0, // Logs that always happen
+    ONCE = 1,   // Logs, that happen once per program
+    CELL = 2,   // Logs, that happen once per cell
+    BYTE = 3,   // Logs, that happen once per each byte of data
+    BIT = 4,    // Logs, that happen once per each bit of data
+    SKIP = 1000 // Logs, that are never written
+  };
+
+  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::BIT;
+
+  static constexpr auto ENCODER_BUILD = LOG_LEVEL::BYTE;
+  static constexpr auto BIT_IO = LOG_LEVEL::BIT;
+  static constexpr auto NUMBER = LOG_LEVEL::BYTE;
+  static constexpr auto CELL_META = LOG_LEVEL::CELL;
+  static constexpr auto COMPRESSION_META = LOG_LEVEL::ONCE;
+
+  constexpr bool check_log_level(enum LOG_LEVEL log_level) {
+    return int(global_log_level) >= int(log_level);
+  }
+} // namespace log_level
+
 #ifndef ONLINE_JUDGE
     void flush() { std::cerr << std::flush; }
     void flushln() { std::cerr << std::endl; }
@@ -107,9 +130,13 @@ void add_char(const std::string& name, unsigned char value) {
     template<class ...T> void println(const T&... u) { print(u..., '\n'); }
     #define dbg(...) print("[", #__VA_ARGS__, "] = ", debug::dbgout(__VA_ARGS__)), flushln()
     #define msg(...) print("[", __VA_ARGS__, "]"), flushln()
+    #define DBG(level, ...) if (log_level::check_log_level(level)) dbg(__VA_ARGS__)
+    #define MSG(level, ...) if (log_level::check_log_level(level)) msg(__VA_ARGS__)
 #else
     #define dbg(...) 0
     #define msg(...) 0
+    #define DBG(level, ...) 0
+    #define MSG(level, ...) 0
 #endif
 
 namespace BWT {
@@ -204,20 +231,6 @@ std::pair<byte_buffer, int> bwt(const byte_buffer &input) {
 
     size_t modified_n = modified_input.size();
 
-    // std::vector<byte_buffer> rotations(modified_n);
-    
-    // // Create all rotations of the modified input string
-    // for (size_t i = 0; i < modified_n; ++i) {
-    //     byte_buffer v(modified_input.begin() + i, modified_input.end());
-    //     byte_buffer c(modified_input.begin(), modified_input.begin() + i);
-    //     v.insert(v.end(), c.begin(), c.end());
-    //     rotations[i] = v;
-    // }
-
-    // // Sort the rotations
-    // std::sort(rotations.begin(), rotations.end());
-    // dbg(rotations);
-
     auto sa = suffixarray(modified_input);
 
     // Build the BWT output and find the special symbol position
@@ -275,7 +288,7 @@ template<class Writer>
 struct BitWriter {
   BitWriter(Writer& _w) : w(_w), bit_value(0), bits(0) {}
   void write_bits(uint64_t value, int bit_size) {
-    // std::cerr << "Writing bits " << value << ' ' << bit_size << '\n';
+    MSG(log_level::BIT_IO, "Writing bits ", value, ' ', bit_size);
     for (int i = 0; i < bit_size; ++i) {
       write_bit(value >> i & 1);
     }
@@ -289,7 +302,7 @@ struct BitWriter {
   }
   void flush_byte() {
     if (bits != 0) {
-      // std::cerr << "Flush byte\n";
+      MSG(log_level::BIT_IO, "Writing bits ", uint16_t(bit_value), ' ', bits);
       w.store_uint(bit_value, 1); // stores exactly byte
       bits = 0;
       bit_value = 0;
@@ -318,7 +331,7 @@ struct BitReader {
     for (int i = 0; i < bits; ++i) {
       ans |= static_cast<uint64_t>(read_bit()) << i;
     }
-    // std::cerr << "Reading bits " << ans << ' ' << bits << '\n';
+    MSG(log_level::BIT_IO, "Read bits ", ans, ' ', bits);
     return ans;
   }
   int flush_and_get_ptr() {
@@ -327,7 +340,7 @@ struct BitReader {
   }
   void flush_byte() {
     if (bit_index != 0) {
-      // std::cerr << "Flush byte\n";
+      MSG(log_level::BIT_IO, "Flush byte");
       ++ptr;
       bit_index = 0;
     }
@@ -350,16 +363,17 @@ namespace huffman {
 using distribution_data = std::vector<std::pair<long long, int>>;
 
 static const std::map<std::string, distribution_data> huffman_data = {
-{"d1",{{28830,34},{14507,40},{7208,2},{4894,0},{4687,1},{1514,33},{1297,3},{570,35},{97,4},{84,8},{25,10},{24,36},{6,9},{0,255},{0,254},{0,253},{0,252},{0,251},{0,250},{0,249},{0,248},{0,247},{0,246},{0,245},{0,244},{0,243},{0,242},{0,241},{0,240},{0,239},{0,238},{0,237},{0,236},{0,235},{0,234},{0,233},{0,232},{0,231},{0,230},{0,229},{0,228},{0,227},{0,226},{0,225},{0,224},{0,223},{0,222},{0,221},{0,220},{0,219},{0,218},{0,217},{0,216},{0,215},{0,214},{0,213},{0,212},{0,211},{0,210},{0,209},{0,208},{0,207},{0,206},{0,205},{0,204},{0,203},{0,202},{0,201},{0,200},{0,199},{0,198},{0,197},{0,196},{0,195},{0,194},{0,193},{0,192},{0,191},{0,190},{0,189},{0,188},{0,187},{0,186},{0,185},{0,184},{0,183},{0,182},{0,181},{0,180},{0,179},{0,178},{0,177},{0,176},{0,175},{0,174},{0,173},{0,172},{0,171},{0,170},{0,169},{0,168},{0,167},{0,166},{0,165},{0,164},{0,163},{0,162},{0,161},{0,160},{0,159},{0,158},{0,157},{0,156},{0,155},{0,154},{0,153},{0,152},{0,151},{0,150},{0,149},{0,148},{0,147},{0,146},{0,145},{0,144},{0,143},{0,142},{0,141},{0,140},{0,139},{0,138},{0,137},{0,136},{0,135},{0,134},{0,133},{0,132},{0,131},{0,130},{0,129},{0,128},{0,127},{0,126},{0,125},{0,124},{0,123},{0,122},{0,121},{0,120},{0,119},{0,118},{0,117},{0,116},{0,115},{0,114},{0,113},{0,112},{0,111},{0,110},{0,109},{0,108},{0,107},{0,106},{0,105},{0,104},{0,103},{0,102},{0,101},{0,100},{0,99},{0,98},{0,97},{0,96},{0,95},{0,94},{0,93},{0,92},{0,91},{0,90},{0,89},{0,88},{0,87},{0,86},{0,85},{0,84},{0,83},{0,82},{0,81},{0,80},{0,79},{0,78},{0,77},{0,76},{0,75},{0,74},{0,73},{0,72},{0,71},{0,70},{0,69},{0,68},{0,67},{0,66},{0,65},{0,64},{0,63},{0,62},{0,61},{0,60},{0,59},{0,58},{0,57},{0,56},{0,55},{0,54},{0,53},{0,52},{0,51},{0,50},{0,49},{0,48},{0,47},{0,46},{0,45},{0,44},{0,43},{0,42},{0,41},{0,39},{0,38},{0,37},{0,32},{0,31},{0,30},{0,29},{0,28},{0,27},{0,26},{0,25},{0,24},{0,23},{0,22},{0,21},{0,20},{0,19},{0,18},{0,17},{0,16},{0,15},{0,14},{0,13},{0,12},{0,11},{0,7},{0,6},{0,5}}},
+{"cell_data",{{136455,0},{40308,1},{12863,192},{12438,2},{12165,64},{11673,160},{10547,8},{9794,128},{9617,40},{9546,32},{9290,232},{9211,104},{9086,136},{8925,72},{8894,200},{8749,224},{8673,11},{8450,168},{8380,16},{8079,4},{7739,6},{7721,12},{7670,23},{7604,3},{7449,80},{7208,48},{7098,96},{7027,24},{6868,5},{6805,208},{6787,112},{6769,193},{6750,22},{6634,190},{6634,9},{6633,144},{6630,10},{6603,20},{6560,132},{6522,51},{6510,17},{6442,13},{6389,114},{6368,194},{6340,52},{6291,130},{6276,163},{6269,67},{6256,49},{6244,56},{6148,33},{6146,255},{6146,201},{6112,93},{6094,116},{6075,82},{6075,14},{6073,226},{6072,161},{6064,129},{6060,50},{6059,97},{6048,203},{6042,54},{6028,170},{6014,185},{6010,206},{5988,176},{5976,76},{5959,68},{5951,19},{5933,15},{5926,250},{5915,100},{5900,162},{5892,35},{5874,46},{5873,85},{5870,189},{5860,41},{5858,186},{5851,7},{5848,21},{5843,88},{5842,172},{5840,115},{5839,248},{5826,57},{5800,102},{5795,184},{5779,195},{5756,65},{5756,58},{5746,140},{5734,83},{5729,98},{5728,18},{5721,164},{5717,55},{5715,86},{5689,53},{5677,225},{5676,156},{5660,207},{5658,173},{5658,133},{5657,131},{5654,188},{5654,92},{5652,204},{5632,28},{5631,25},{5626,34},{5598,244},{5592,31},{5589,242},{5580,47},{5574,106},{5572,240},{5571,237},{5569,43},{5568,120},{5559,178},{5557,84},{5552,169},{5546,137},{5536,167},{5531,166},{5528,101},{5527,26},{5526,62},{5525,209},{5522,177},{5520,134},{5515,180},{5514,142},{5495,118},{5494,187},{5492,99},{5487,138},{5485,234},{5469,44},{5465,199},{5465,165},{5464,198},{5456,90},{5444,151},{5443,141},{5430,66},{5427,152},{5419,215},{5403,36},{5397,153},{5396,212},{5388,197},{5386,70},{5385,196},{5379,38},{5376,73},{5370,39},{5362,71},{5359,45},{5354,235},{5351,202},{5351,111},{5347,123},{5337,108},{5336,109},{5325,29},{5322,81},{5316,216},{5316,139},{5314,191},{5311,27},{5293,63},{5290,103},{5285,69},{5281,113},{5281,37},{5277,158},{5277,147},{5267,228},{5267,122},{5262,127},{5258,60},{5251,211},{5248,227},{5238,214},{5235,94},{5234,42},{5230,117},{5225,91},{5221,236},{5214,174},{5194,59},{5193,213},{5193,124},{5182,175},{5174,217},{5174,89},{5166,30},{5162,143},{5157,135},{5155,154},{5149,241},{5144,231},{5135,78},{5130,230},{5124,77},{5121,146},{5118,110},{5102,205},{5096,219},{5093,79},{5092,210},{5091,95},{5088,87},{5083,229},{5080,238},{5079,126},{5054,74},{5053,239},{5052,171},{5046,218},{5038,119},{5026,61},{5014,252},{5014,145},{5012,121},{5010,251},{5010,223},{5006,222},{5005,150},{4994,247},{4994,105},{4979,148},{4971,157},{4963,159},{4954,179},{4941,155},{4928,182},{4920,243},{4916,183},{4901,245},{4897,149},{4891,233},{4885,221},{4873,220},{4862,249},{4862,181},{4832,107},{4811,75},{4793,125},{4760,254},{4710,246},{4699,253}}},
+{"d1",{{28830,34},{14507,40},{7208,2},{4894,0},{4687,1},{1514,33},{1297,3},{570,35},{97,4},{84,8},{25,10},{24,36},{6,9}}},
 {"d2",{{14521,72},{9099,15},{7528,17},{7104,13},{4147,11},{3057,1},{1378,9},{1031,105},{971,130},{909,111},{845,113},{820,19},{777,181},{772,7},{657,177},{558,81},{391,171},{385,67},{348,158},{284,75},{278,89},{277,163},{248,21},{214,161},{212,149},{210,151},{210,23},{210,3},{183,104},{156,175},{154,33},{153,201},{143,153},{143,115},{139,66},{134,152},{134,69},{131,225},{123,135},{120,109},{117,157},{111,156},{111,20},{110,97},{110,73},{109,150},{101,10},{94,91},{91,87},{90,25},{87,147},{86,12},{83,99},{76,16},{74,155},{73,162},{72,112},{66,154},{65,107},{64,80},{60,102},{59,179},{59,169},{55,98},{53,2},{49,121},{49,18},{48,47},{45,5},{43,8},{42,117},{42,65},{41,100},{41,27},{40,160},{38,197},{38,183},{37,229},{36,148},{35,88},{35,68},{34,217},{33,131},{33,37},{32,170},{30,138},{30,14},{29,176},{29,145},{29,143},{29,103},{29,74},{28,173},{28,137},{28,95},{28,94},{27,219},{27,185},{26,178},{25,247},{25,203},{25,172},{24,254},{24,244},{23,222},{23,32},{22,159},{22,55},{22,0},{21,233},{21,174},{21,79},{21,77},{21,26},{21,24},{20,180},{20,110},{20,85},{19,192},{19,167},{19,141},{19,76},{18,235},{17,191},{17,122},{17,71},{17,31},{16,255},{16,83},{15,246},{15,168},{15,132},{15,119},{14,35},{13,251},{13,242},{13,195},{13,165},{13,30},{13,4},{12,230},{12,215},{12,133},{12,114},{12,70},{11,241},{11,227},{11,127},{11,108},{11,22},{10,128},{10,124},{10,123},{10,101},{10,51},{10,34},{10,29},{9,231},{9,182},{9,126},{9,106},{9,38},{8,249},{8,248},{8,220},{8,142},{8,118},{8,64},{8,57},{8,53},{8,28},{7,236},{7,234},{7,208},{7,205},{7,193},{7,129},{7,120},{6,213},{6,202},{6,92},{6,78},{5,252},{5,243},{5,223},{5,212},{5,204},{5,200},{5,166},{5,139},{5,58},{5,56},{5,40},{4,245},{4,221},{4,216},{4,214},{4,209},{4,199},{4,194},{4,189},{4,86},{4,50},{4,46},{4,44},{4,6},{3,226},{3,210},{3,116},{3,96},{3,82},{3,61},{3,60},{3,48},{3,42},{3,39},{2,253},{2,238},{2,224},{2,196},{2,190},{2,187},{2,146},{2,144},{2,140},{2,136},{2,90},{2,84},{2,49},{2,45},{2,36},{1,250},{1,240},{1,232},{1,228},{1,218},{1,211},{1,206},{1,198},{1,184},{1,164},{1,134},{1,93},{1,62},{1,59},{1,54},{1,52},{0,239},{0,237},{0,207},{0,188},{0,186},{0,125},{0,63},{0,43},{0,41}}},
 {"ref_diff",{{22819,0},{20114,1},{11193,2},{1646,3},{692,4},{575,5},{503,6},{446,7},{360,8},{318,9},{307,10},{270,11},{239,12},{208,13},{196,14},{187,15},{158,16},{117,20},{117,17},{114,19},{106,21},{103,18},{99,23},{97,22},{83,25},{81,31},{80,26},{78,24},{74,27},{71,28},{67,30},{65,29},{59,32},{58,35},{52,36},{46,37},{43,34},{42,33},{38,38},{36,45},{36,39},{34,46},{33,48},{33,44},{32,49},{32,40},{31,42},{29,66},{29,58},{29,41},{27,54},{26,519},{26,163},{26,57},{25,154},{25,129},{25,47},{24,603},{24,150},{24,124},{24,67},{24,65},{24,55},{24,43},{23,158},{23,115},{23,92},{23,68},{22,909},{22,241},{22,221},{22,156},{22,155},{22,144},{22,127},{22,125},{22,76},{22,53},{21,656},{21,210},{21,178},{21,170},{21,147},{21,133},{21,108},{21,101},{21,71},{21,70},{21,63},{21,61},{21,59},{20,904},{20,874},{20,854},{20,843},{20,623},{20,268},{20,258},{20,226},{20,222},{20,196},{20,177},{20,157},{20,142},{20,140},{20,120},{20,119},{20,116},{20,114},{20,113},{20,112},{20,90},{20,52},{19,841},{19,649},{19,613},{19,564},{19,229},{19,193},{19,167},{19,162},{19,152},{19,137},{19,131},{19,109},{19,94},{19,91},{19,73},{19,72},{19,69},{19,62},{19,60},{18,1089},{18,1053},{18,1044},{18,956},{18,890},{18,764},{18,664},{18,638},{18,626},{18,625},{18,604},{18,584},{18,507},{18,440},{18,356},{18,341},{18,291},{18,262},{18,238},{18,227},{18,204},{18,186},{18,166},{18,160},{18,159},{18,136},{18,135},{18,93},{18,88},{18,85},{18,80},{18,74},{18,51},{18,50},{17,963},{17,950},{17,940},{17,905},{17,851},{17,849},{17,660},{17,640},{17,621},{17,615},{17,552},{17,394},{17,370},{17,337},{17,244},{17,225},{17,208},{17,201},{17,194},{17,188},{17,184},{17,179},{17,164},{17,148},{17,132},{17,107},{17,102},{17,98},{17,97},{17,89},{17,79},{17,78},{17,75},{17,56},{16,1176},{16,1086},{16,1042},{16,977},{16,967},{16,958},{16,943},{16,918},{16,915},{16,865},{16,862},{16,855},{16,674},{16,631},{16,628},{16,624},{16,619},{16,605},{16,594},{16,581},{16,541},{16,522},{16,521},{16,492},{16,489},{16,475},{16,458},{16,425},{16,421},{16,387},{16,360},{16,342},{16,326},{16,272},{16,248},{16,213},{16,199},{16,195},{16,165},{16,146},{16,128},{16,126},{16,123},{16,122},{16,104},{16,83},{15,1360},{15,1311},{15,1303},{15,1281},{15,1181},{15,1179},{15,1138},{15,1114},{15,1094},{15,1092}}},
 };
 
+
 struct HuffmanEncoder {
   HuffmanEncoder() {}
   HuffmanEncoder(const distribution_data& data, const std::string name) {
-    msg("HERE");
-    dbg(data);
+    DBG(log_level::ENCODER_BUILD, data);
     set_data(data);
     #ifndef ONLINE_JUDGE
       eval_data(data, name);
@@ -368,19 +382,18 @@ struct HuffmanEncoder {
   }
   void eval_data(const distribution_data& data, const std::string name) {
     long long uncompressed = 0, compressed = 0;
-    dbg(data);
     for (auto [count, value] : data) {
       auto [_, len] = code_len.at(value);
       uncompressed += 8 * count;
       compressed += len * count;
     }
     auto compression_ratio = uncompressed * 1.0 / compressed;
-    msg("Huffman encoder data for ", name, ": ", debug::dbgout(uncompressed, compressed, compression_ratio));
+    MSG(log_level::ENCODER_BUILD, "Huffman encoder data for ", name, ": ", debug::dbgout(uncompressed, compressed, compression_ratio));
   }
   template<class Writer>
   void write(BitWriter<Writer>& bwriter, int value) const {
     auto [code, len] = code_len.at(value);
-    msg("Huffman write ", code, ' ', len, ' ', value);
+    MSG(log_level::NUMBER, "Huffman write ", code, ' ', len, ' ', value);
     bwriter.write_bits(code, len);
   }
   int read(BitReader& breader) const {
@@ -390,7 +403,7 @@ struct HuffmanEncoder {
       // code = (code << 1) + breader.read_bit();
       auto it = code_index.find({code, b + 1});
       if (it != code_index.end()) {
-        msg("Huffman read ", code, ' ', b + 1, ' ', it->second);
+        MSG(log_level::NUMBER, "Huffman read ", code, ' ', b + 1, ' ', it->second);
         return it->second;
       }
     }
@@ -432,7 +445,6 @@ private:
   void build_index() {
     for (auto [value, c_l] : code_len) {
       auto [code, len] = c_l;
-      // dbg(code, len, value);
       code_index[{code, len}] = value;
     }
   }
@@ -446,11 +458,12 @@ private:
 
 
 struct HuffmanEncoderWithDefault {
+  HuffmanEncoderWithDefault() {}
   HuffmanEncoderWithDefault(distribution_data data, int _special, std::pair<int, int> range, const std::string& name)
   : special(_special)
   , min_value(range.first)
   , extra_bits(std::ceil(std::log2(range.second - range.first))) {
-    dbg(special, min_value, extra_bits);
+    DBG(log_level::ENCODER_BUILD, name, special, min_value, extra_bits);
     for (auto [count, value] : data) {
       DCHECK(value != special);
     }
@@ -489,7 +502,13 @@ private:
 
 static const HuffmanEncoder d1(huffman_data.at("d1"), "d1");
 static const HuffmanEncoder d2(huffman_data.at("d2"), "d2");
-static const HuffmanEncoderWithDefault ref_diff(huffman_data.at("ref_diff"), -1, {0, 100000}, "ref_diff");
+HuffmanEncoderWithDefault ref_diff;
+
+void init_ref_diff(int cell_count) {
+  int l = 0;
+  int r = std::max(cell_count, 1);
+  ref_diff = HuffmanEncoderWithDefault(huffman_data.at("ref_diff"), -1, {l, r}, "ref_diff");
+}
 
 } // namespace huffman
 
@@ -753,7 +772,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
   // }
   // offset_bit_size = ptr[1];
 
-  dbg(ref_bit_size);
+  DBG(log_level::COMPRESSION_META, ref_bit_size);
   auto read_ref = [&]() -> uint64_t {
     return breader.read_bits(ref_bit_size);
   };
@@ -762,6 +781,8 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
     cell_count = -1;
     return 0;
   }
+  DBG(log_level::COMPRESSION_META, cell_count);
+  huffman::init_ref_diff(cell_count);
   root_count = (int)read_ref();
   if (root_count <= 0) {
     root_count = -1;
@@ -788,7 +809,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
 template <typename WriterT>
 td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   BitWriter bwriter(writer);
-  msg("Running custom serialize impl");
+  MSG(log_level::COMPRESSION_META, "Running custom serialize impl");
   auto store_ref = [&](unsigned long long value) { bwriter.write_bits(value, info.ref_bit_size); };
 
   td::uint8 byte{0};
@@ -799,6 +820,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   bwriter.write_bits(info.ref_bit_size, 5);
 
   store_ref(cell_count);
+  huffman::init_ref_diff(cell_count);
   store_ref(root_count);
   for (const auto& root_info : roots) {
     int k = cell_count - 1 - root_info.idx;
@@ -812,41 +834,42 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   size_t keep_position = writer.position();
   for (int i = cell_count - 1; i >= 0; --i) {
     int idx = cell_count - 1 - i;
-    msg("Saving cell with idx ", i, " with refnum ", int(cell_list_[idx].ref_num));
+    MSG(log_level::CELL_META, "Saving cell with idx ", i, " with refnum ", int(cell_list_[idx].ref_num));
     auto start_position = writer.position();
     const auto& dc_info = cell_list_[idx];
     const Ref<DataCell>& dc = dc_info.dc_ref;
     unsigned char buf[256];
     int s = dc->serialize(buf, 256);
-    msg("Cell serialized size = ", s);
-    msg("Cell d1, d2 = ", uint16_t(buf[0]), ' ', uint16_t(buf[1]));
+    MSG(log_level::CELL_META, "Cell serialized size = ", s);
+    MSG(log_level::CELL_META, "Cell d1, d2 = ", uint16_t(buf[0]), ' ', uint16_t(buf[1]));
     // writer.store_bytes(buf, s);
     huffman::d1.write(bwriter, buf[0]);
     huffman::d2.write(bwriter, buf[1]);
     bwriter.flush_byte();
     for (int i = 2; i < s; ++i) {
       // std::cerr << "Saving byte " << uint16_t(buf[i]) << '\n';
+      add_char("cell_data", buf[i]);
       bwriter.write_bits(buf[i], 8);
     }
     bwriter.flush_byte();
     DCHECK(dc->size_refs() == dc_info.ref_num);
     for (unsigned j = 0; j < dc_info.ref_num; ++j) {
       int k = cell_count - 1 - dc_info.ref_idx[j];
-      msg("Link from ", i, " to ", k);
+      MSG(log_level::CELL_META, "Link from ", i, " to ", k);
       DCHECK(k > i && k < cell_count);
       int ref_diff = k - i - 1;
-      ++byte_cnt["ref_diff"][ref_diff];
+      add_int("ref_diff", ref_diff);
       // huffman::ref_diff.write(bwriter, ref_diff);
       store_ref(ref_diff);
     }
     auto end_position = writer.position();
-    msg("Cell position ", start_position, ' ', end_position);
+    MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
   }
   bwriter.flush_byte();
   writer.chk();
   // DCHECK(writer.position() - keep_position == info.data_size);
   // DCHECK(writer.empty());
-  dbg(writer.position());
+  DBG(log_level::COMPRESSION_META, writer.position());
   return writer.position();
 }
 
@@ -908,7 +931,7 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   td::BufferSlice res(size_est);
   TRY_RESULT(size, serialize_to(const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(res.data())),
                                 res.size()));
-  dbg(size, res.size());
+  MSG(log_level::COMPRESSION_META, "Expected size = ", size_est, ", Real size = ", size);
   if (size <= res.size()) {
     res.truncate(size);
     return std::move(res);
@@ -924,7 +947,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
   CellBuilder cb;
   auto cell_slice = breader.get_data().substr(breader.get_ptr(), cell_info.data_len);
   TRY_RESULT(bits, cell_info.custom_get_bits(cell_slice));
-  msg("Cell bits size = ", bits);
+  MSG(log_level::CELL_META, "Cell bits size = ", bits);
   // for (int i = 0; i < bits; ++i) {
   //   uint8_t bit = breader.read_bit();
   //   std::cerr << int(bit);
@@ -944,7 +967,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
 
   std::array<td::Ref<Cell>, 4> refs_buf;
 
-  dbg(cell_info.refs_cnt);
+  DBG(log_level::CELL_META, cell_info.refs_cnt);
 
   auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
   for (int k = 0; k < cell_info.refs_cnt; k++) {
@@ -967,7 +990,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
 }
 
 td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int max_roots) {
-  msg("Running custom deserialize impl");
+  MSG(log_level::COMPRESSION_META, "Running custom deserialize impl");
   // for (int i = 0; i < data.size(); ++i) {
   //   std::cerr << uint16_t(uint8_t(data[i])) << ' ';
   // }
@@ -1014,7 +1037,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     auto d2 = huffman::d2.read(breader);
     add_char("d1", d1);
     add_char("d2", d2);
-    dbg(d1, d2);
+    DBG(log_level::CELL_META, d1, d2);
     auto status = cell_info.custom_init(d1, d2, info.ref_bit_size);
     if (status.is_error()) {
       return td::Status::Error(PSLICE()
@@ -1022,7 +1045,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     }
     // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
-    msg("Loading cell with idx ", idx);
+    MSG(log_level::CELL_META, "Loading cell with idx ", idx);
     auto r_cell = deserialize_cell(idx, cell_list, breader, cell_info);
     if (r_cell.is_error()) {
       return td::Status::Error(PSLICE() << "invalid bag-of-cells failed to deserialize cell #" << idx << " "
