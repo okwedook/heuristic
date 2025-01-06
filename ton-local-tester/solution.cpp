@@ -823,6 +823,12 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     // writer.store_bytes(buf, s);
     huffman::d1.write(bwriter, buf[0]);
     huffman::d2.write(bwriter, buf[1]);
+    bwriter.flush_byte();
+    for (int i = 2; i < s; ++i) {
+      // std::cerr << "Saving byte " << uint16_t(buf[i]) << '\n';
+      bwriter.write_bits(buf[i], 8);
+    }
+    bwriter.flush_byte();
     DCHECK(dc->size_refs() == dc_info.ref_num);
     for (unsigned j = 0; j < dc_info.ref_num; ++j) {
       int k = cell_count - 1 - dc_info.ref_idx[j];
@@ -833,15 +839,10 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       // huffman::ref_diff.write(bwriter, ref_diff);
       store_ref(ref_diff);
     }
-    bwriter.flush_byte();
-    for (int i = 2; i < s; ++i) {
-      // std::cerr << "Saving byte " << uint16_t(buf[i]) << '\n';
-      bwriter.write_bits(buf[i], 8);
-    }
-    bwriter.flush_byte();
     auto end_position = writer.position();
     msg("Cell position ", start_position, ' ', end_position);
   }
+  bwriter.flush_byte();
   writer.chk();
   // DCHECK(writer.position() - keep_position == info.data_size);
   // DCHECK(writer.empty());
@@ -918,27 +919,6 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
 
 td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Span<td::Ref<DataCell>> cells_span,
                                                                      BitReader& breader, CustomCellSerializationInfo& cell_info) {
-  std::array<td::Ref<Cell>, 4> refs_buf;
-
-  dbg(cell_info.refs_cnt);
-
-  auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
-  for (int k = 0; k < cell_info.refs_cnt; k++) {
-    // int ref_diff = huffman::ref_diff.read(breader);
-    int ref_diff = breader.read_bits(info.ref_bit_size);
-    int ref_idx = idx + 1 + ref_diff;
-    if (ref_idx <= idx) {
-      return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
-                                        << " is to cell #" << ref_idx << " with smaller index");
-    }
-    if (ref_idx >= cell_count) {
-      return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
-                                        << " is to non-existent cell #" << ref_idx << ", only " << cell_count
-                                        << " cells are defined");
-    }
-    refs[k] = cells_span[cell_count - ref_idx - 1];
-  }
-
   breader.flush_byte();
 
   CellBuilder cb;
@@ -961,6 +941,27 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
   // DCHECK(cell_info.end_offset == cell_info.refs_offset + cell_info.refs_cnt * info.ref_bit_size);
 
   breader.flush_byte();
+
+  std::array<td::Ref<Cell>, 4> refs_buf;
+
+  dbg(cell_info.refs_cnt);
+
+  auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
+  for (int k = 0; k < cell_info.refs_cnt; k++) {
+    // int ref_diff = huffman::ref_diff.read(breader);
+    int ref_diff = breader.read_bits(info.ref_bit_size);
+    int ref_idx = idx + 1 + ref_diff;
+    if (ref_idx <= idx) {
+      return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
+                                        << " is to cell #" << ref_idx << " with smaller index");
+    }
+    if (ref_idx >= cell_count) {
+      return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
+                                        << " is to non-existent cell #" << ref_idx << ", only " << cell_count
+                                        << " cells are defined");
+    }
+    refs[k] = cells_span[cell_count - ref_idx - 1];
+  }
 
   return cell_info.custom_create_data_cell(cb, refs);
 }
