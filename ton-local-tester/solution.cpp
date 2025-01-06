@@ -180,6 +180,7 @@ template<class Writer>
 struct BitWriter {
   BitWriter(Writer& _w) : w(_w), bit_value(0), bits(0) {}
   void write_bits(uint64_t value, int bit_size) {
+    // std::cerr << "Writing bits " << value << ' ' << bit_size << '\n';
     for (int i = 0; i < bit_size; ++i) {
       write_bit(value >> i & 1);
     }
@@ -193,6 +194,7 @@ struct BitWriter {
   }
   void flush_byte() {
     if (bits != 0) {
+      // std::cerr << "Flush byte\n";
       w.store_uint(bit_value, 1); // stores exactly byte
       bits = 0;
       bit_value = 0;
@@ -480,6 +482,7 @@ struct BitReader {
     for (int i = 0; i < bits; ++i) {
       ans |= static_cast<uint64_t>(read_bit()) << i;
     }
+    // std::cerr << "Reading bits " << ans << ' ' << bits << '\n';
     return ans;
   }
   int flush_and_get_ptr() {
@@ -488,17 +491,96 @@ struct BitReader {
   }
   void flush_byte() {
     if (bit_index != 0) {
+      // std::cerr << "Flush byte\n";
       ++ptr;
       bit_index = 0;
     }
   }
 private:
   const td::Slice& data;
-  uint8_t ptr;
+  int ptr;
   int bit_index;
 };
 
 namespace vm {
+
+
+struct CustomCellSerializationInfo : public CellSerializationInfo {
+
+  td::Result<int> custom_get_bits(td::Slice cell) const {
+      if (data_with_bits) {
+        // for (int i = 0; i <= data_offset + data_len - 1; ++i) {
+        //   std::cerr << uint16_t(uint8_t(cell[i])) << ' ';
+        // }
+        // std::cerr << '\n';
+        // std::cerr << "Data offsets " << data_offset << ' ' << data_len << '\n';
+        DCHECK(data_len != 0);
+        int last = cell[data_offset + data_len - 1];
+        if (!(last & 0x7f)) {
+          return td::Status::Error("overlong encoding");
+        }
+        return td::narrow_cast<int>((data_len - 1) * 8 + 7 - td::count_trailing_zeroes_non_zero32(last));
+      } else {
+        return td::narrow_cast<int>(data_len * 8);
+      }
+  }
+  td::Status custom_init(td::Slice data, int ref_bit_size) {
+    if (data.size() < 2) {
+      return td::Status::Error(PSLICE() << "Not enough bytes " << td::tag("got", data.size())
+                                        << td::tag("expected", "at least 2"));
+    }
+    TRY_STATUS(custom_init(data.ubegin()[0], data.ubegin()[1], ref_bit_size));
+    if (data.size() < end_offset) {
+      return td::Status::Error(PSLICE() << "Not enough bytes " << td::tag("got", data.size())
+                                        << td::tag("expected", end_offset));
+    }
+    return td::Status::OK();
+  }
+
+  td::Status custom_init(td::uint8 d1, td::uint8 d2, int ref_bit_size) {
+    refs_cnt = d1 & 7;
+    level_mask = Cell::LevelMask(d1 >> 5);
+    special = (d1 & 8) != 0;
+    with_hashes = (d1 & 16) != 0;
+
+    if (refs_cnt > 4) {
+      if (refs_cnt != 7 || !with_hashes) {
+        return td::Status::Error("Invalid first byte");
+      }
+      refs_cnt = 0;
+      // ...
+      // do not deserialize absent cells!
+      return td::Status::Error("TODO: absent cells");
+    }
+
+    hashes_offset = 2;
+    auto n = level_mask.get_hashes_count();
+    depth_offset = hashes_offset;
+    data_offset = depth_offset;
+    data_len = (d2 >> 1) + (d2 & 1);
+    data_with_bits = (d2 & 1) != 0;
+    refs_offset = data_offset + data_len;
+    end_offset = refs_offset + (refs_cnt * ref_bit_size + 7) / 8;
+
+    return td::Status::OK();
+  }
+  td::Result<Ref<DataCell>> custom_create_data_cell(CellBuilder &cb, td::Span<Ref<Cell>> refs) const {
+    DCHECK(refs_cnt == (td::int64)refs.size());
+    for (int k = 0; k < refs_cnt; k++) {
+      cb.store_ref(std::move(refs[k]));
+    }
+    TRY_RESULT(res, cb.finalize_novm_nothrow(special));
+    CHECK(!res.is_null());
+    if (res->is_special() != special) {
+      return td::Status::Error("is_special mismatch");
+    }
+    if (res->get_level_mask() != level_mask) {
+      return td::Status::Error("level mask mismatch");
+    }
+    return res;
+  }
+};
+
 class CustomBagOfCells {
  public:
   const BagOfCells& get_og() const {
@@ -531,7 +613,7 @@ class CustomBagOfCells {
     void invalidate() {
       valid = false;
     }
-    long long parse_serialized_header(const td::Slice& slice);
+    long long parse_serialized_header(BitReader& breader);
     // unsigned long long read_int(const unsigned char* ptr, unsigned bytes);
     // unsigned long long read_ref(const unsigned char* ptr) {
     //   return read_int(ptr, ref_bit_size);
@@ -638,7 +720,7 @@ class CustomBagOfCells {
   unsigned long long get_idx_entry(int index);
   bool get_cache_entry(int index);
   td::Result<td::Slice> get_cell_slice(int index, td::Slice data);
-  td::Result<td::Ref<vm::DataCell>> deserialize_cell(int idx, td::Slice cell_slice, td::Span<td::Ref<DataCell>> cells);
+  td::Result<td::Ref<vm::DataCell>> deserialize_cell(int idx, td::Slice cell_slice, td::Span<td::Ref<DataCell>> cells, BitReader& breader, CustomCellSerializationInfo& cell_info);
 };
 
 // unsigned long long CustomBagOfCells::Info::read_int(const unsigned char* ptr, unsigned bytes) {
@@ -659,10 +741,9 @@ class CustomBagOfCells {
 //   DCHECK(!bytes);
 // }
 
-long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice) {
+long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
   invalidate();
-  int sz = static_cast<int>(std::min(slice.size(), static_cast<std::size_t>(0xffff)));
-  const unsigned char* ptr = slice.ubegin();
+  // int sz = static_cast<int>(std::min(slice.size(), static_cast<std::size_t>(0xffff)));
   // magic = (unsigned)read_int(ptr, 4);
   magic = boc_generic;
   has_crc32c = false;
@@ -676,69 +757,44 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
     magic = 0;
     return 0;
   }
-  if (sz < 1) {
-    return -10;
-  }
-  BitReader breader(slice, 0);
-  td::uint8 byte = breader.read_bits(3);
-  // td::uint8 byte = 2;
-  ref_bit_size = byte & 7;
-  if (ref_bit_size > 4 || ref_bit_size < 1) {
+  // if (sz < 1) {
+  //   return -10;
+  // }
+  // ref_bit_size = 2;
+  ref_bit_size = breader.read_bits(5);
+  if (ref_bit_size > 4 * 8 || ref_bit_size < 1) {
     return 0;
   }
   // if (sz < 6) {
   //   return -7 - 3 * ref_bit_size;
   // }
   // offset_bit_size = ptr[1];
-  offset_bit_size = breader.read_bits(3);
-  if (offset_bit_size > 8 || offset_bit_size < 1) {
+  offset_bit_size = breader.read_bits(5);
+
+  std::cerr << "Ref/offset bit size = " << ref_bit_size << ' ' << offset_bit_size << '\n';
+  if (offset_bit_size > 4 * 8 || offset_bit_size < 1) {
     return 0;
   }
-  int start_size = breader.flush_and_get_ptr();
-  roots_offset = start_size + 3 * ref_bit_size + offset_bit_size;
-  ptr += start_size;
-  sz -= start_size;
-  if (sz < ref_bit_size) {
-    return -static_cast<int>(roots_offset);
-  }
   auto read_ref = [&]() -> uint64_t {
-    return breader.read_bits(ref_bit_size * 8);
+    return breader.read_bits(ref_bit_size);
   };
   auto read_offset = [&]() -> uint64_t {
-    return breader.read_bits(offset_bit_size * 8);
+    return breader.read_bits(offset_bit_size);
   };
   cell_count = (int)read_ref();
   if (cell_count <= 0) {
     cell_count = -1;
     return 0;
   }
-  if (sz < 2 * ref_bit_size) {
-    return -static_cast<int>(roots_offset);
-  }
   root_count = (int)read_ref();
   if (root_count <= 0) {
     root_count = -1;
     return 0;
   }
-  index_offset = roots_offset;
-  if (magic == boc_generic) {
-    index_offset += (long long)root_count * ref_bit_size;
-    has_roots = true;
-  } else {
-    if (root_count != 1) {
-      return 0;
-    }
-  }
-  data_offset = index_offset;
-  if (sz < 3 * ref_bit_size) {
-    return -static_cast<int>(roots_offset);
-  }
+  has_roots = true;
   absent_count = (int)read_ref();
   if (absent_count < 0 || absent_count > cell_count) {
     return 0;
-  }
-  if (sz < 3 * ref_bit_size + offset_bit_size) {
-    return -static_cast<int>(roots_offset);
   }
   data_size = read_offset();
   if (data_size > ((unsigned long long)cell_count << 10)) {
@@ -747,12 +803,9 @@ long long CustomBagOfCells::Info::parse_serialized_header(const td::Slice& slice
   if (data_size > (1ull << 40)) {
     return 0;  // bag of cells with more than 1TiB data is unlikely
   }
-  if (data_size < cell_count * (2ull + ref_bit_size) - ref_bit_size) {
-    return 0;  // invalid header, too many cells for this amount of data bytes
-  }
   valid = true;
-  total_size = data_offset + data_size;
-  return breader.flush_and_get_ptr();
+
+  return 1;
 }
 
 //serialized_boc#672fb0ac has_idx:(## 1) has_crc32c:(## 1)
@@ -771,20 +824,18 @@ template <typename WriterT>
 td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   BitWriter bwriter(writer);
   std::cerr << "Running custom serialize impl\n";
-  auto store_ref = [&](unsigned long long value) { std::cerr << "Store ref = " << value << '\n', bwriter.write_bits(value, info.ref_bit_size * 8); };
-  auto store_offset = [&](unsigned long long value) { bwriter.write_bits(value, info.offset_bit_size * 8); };
+  auto store_ref = [&](unsigned long long value) { bwriter.write_bits(value, info.ref_bit_size); };
+  auto store_offset = [&](unsigned long long value) { bwriter.write_bits(value, info.offset_bit_size); };
 
   td::uint8 byte{0};
   // 3, 4 - flags
-  if (info.ref_bit_size < 1 || info.ref_bit_size > 7) {
+  if (info.ref_bit_size < 1 || info.ref_bit_size > 4 * 8) {
     return 0;
   }
-  byte |= static_cast<td::uint8>(info.ref_bit_size);
-  bwriter.write_bits(byte, 3);
+  bwriter.write_bits(info.ref_bit_size, 5);
 
-  bwriter.write_bits(info.offset_bit_size, 4);
+  bwriter.write_bits(info.offset_bit_size, 5);
 
-  bwriter.flush_byte();
   store_ref(cell_count);
   store_ref(root_count);
   store_ref(0);
@@ -794,10 +845,11 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     DCHECK(k >= 0 && k < cell_count);
     store_ref(k);
   }
-  DCHECK(writer.position() == info.index_offset);
+  // DCHECK(writer.position() == info.index_offset);
   DCHECK((unsigned)cell_count == cell_list_.size());
-  DCHECK(writer.position() == info.data_offset);
+  // DCHECK(writer.position() == info.data_offset);
   size_t keep_position = writer.position();
+  bwriter.flush_byte();
   for (int i = cell_count - 1; i >= 0; --i) {
     int idx = cell_count - 1 - i;
     std::cerr << "Saving cell with idx " << i << " with refnum " << int(cell_list_[idx].ref_num) << '\n';
@@ -806,6 +858,8 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     const Ref<DataCell>& dc = dc_info.dc_ref;
     unsigned char buf[256];
     int s = dc->serialize(buf, 256);
+    std::cerr << "Cell serialized size = " << s << '\n';
+    std::cerr << "Cell d1, d2 = " << uint16_t(buf[0]) << ' ' << uint16_t(buf[1]) << '\n';
     // writer.store_bytes(buf, s);
     for (int i = 0; i < s; ++i) {
       // std::cerr << "Saving byte " << uint16_t(buf[i]) << '\n';
@@ -818,11 +872,12 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       DCHECK(k > i && k < cell_count);
       store_ref(k - i - 1);
     }
+    bwriter.flush_byte();
     auto end_position = writer.position();
     std::cerr << "Cell position " << start_position << ' ' << end_position << '\n';
   }
   writer.chk();
-  DCHECK(writer.position() - keep_position == info.data_size);
+  // DCHECK(writer.position() - keep_position == info.data_size);
   // DCHECK(writer.empty());
   std::cerr << "Writer position " << writer.position() << '\n';
   return writer.position();
@@ -835,15 +890,15 @@ td::uint64 CustomBagOfCells::compute_sizes(int& r_size, int& o_size) {
     r_size = o_size = 0;
     return 0;
   }
-  while (cell_count >= (1LL << (rs << 3))) {
+  while (cell_count >= (1LL << rs)) {
     rs++;
   }
-  td::uint64 data_bytes_adj = data_bytes + (unsigned long long)int_refs * rs;
+  td::uint64 data_bytes_adj = data_bytes + (unsigned long long)int_refs * ((rs + 7) / 8);
   td::uint64 max_offset = data_bytes_adj;
-  while (max_offset >= (1ULL << (os << 3))) {
+  while (max_offset >= (1ULL << os)) {
     os++;
   }
-  if (rs > 4 || os > 8) {
+  if (rs > 4 * 8 || os > 4 * 8) {
     r_size = o_size = 0;
     return 0;
   }
@@ -855,6 +910,7 @@ td::uint64 CustomBagOfCells::compute_sizes(int& r_size, int& o_size) {
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 std::size_t CustomBagOfCells::estimate_serialized_size() {
   auto data_bytes_adj = compute_sizes(info.ref_bit_size, info.offset_bit_size);
+  std::cerr << "Ref/offset bit size = " << info.ref_bit_size << ' ' << info.offset_bit_size << '\n';
   if (!data_bytes_adj) {
     info.invalidate();
     return 0;
@@ -866,8 +922,8 @@ std::size_t CustomBagOfCells::estimate_serialized_size() {
   info.root_count = root_count;
   info.cell_count = cell_count;
   info.absent_count = dangle_count;
-  info.roots_offset = 0 + 1 + 0 + 3 * info.ref_bit_size + info.offset_bit_size;
-  info.index_offset = info.roots_offset + info.root_count * info.ref_bit_size;
+  info.roots_offset = 0 + 1 + 0 + 3 * ((info.ref_bit_size + 7) / 8) + (info.offset_bit_size + 7) / 8;
+  info.index_offset = info.roots_offset + info.root_count * (info.ref_bit_size + 7) / 8;
   info.data_offset = info.index_offset;
   info.magic = Info::boc_generic;
   info.data_size = data_bytes_adj;
@@ -905,94 +961,15 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   }
 }
 
-struct CustomCellSerializationInfo : public CellSerializationInfo {
-
-  td::Result<int> custom_get_bits(td::Slice cell) const {
-      if (data_with_bits) {
-        DCHECK(data_len != 0);
-        int last = cell[data_offset + data_len - 1];
-        if (!(last & 0x7f)) {
-          return td::Status::Error("overlong encoding");
-        }
-        return td::narrow_cast<int>((data_len - 1) * 8 + 7 - td::count_trailing_zeroes_non_zero32(last));
-      } else {
-        return td::narrow_cast<int>(data_len * 8);
-      }
-  }
-  td::Status custom_init(td::Slice data, int ref_bit_size) {
-    if (data.size() < 2) {
-      return td::Status::Error(PSLICE() << "Not enough bytes " << td::tag("got", data.size())
-                                        << td::tag("expected", "at least 2"));
-    }
-    TRY_STATUS(custom_init(data.ubegin()[0], data.ubegin()[1], ref_bit_size));
-    if (data.size() < end_offset) {
-      return td::Status::Error(PSLICE() << "Not enough bytes " << td::tag("got", data.size())
-                                        << td::tag("expected", end_offset));
-    }
-    return td::Status::OK();
-  }
-
-  td::Status custom_init(td::uint8 d1, td::uint8 d2, int ref_bit_size) {
-    refs_cnt = d1 & 7;
-    level_mask = Cell::LevelMask(d1 >> 5);
-    special = (d1 & 8) != 0;
-    with_hashes = (d1 & 16) != 0;
-
-    if (refs_cnt > 4) {
-      if (refs_cnt != 7 || !with_hashes) {
-        return td::Status::Error("Invalid first byte");
-      }
-      refs_cnt = 0;
-      // ...
-      // do not deserialize absent cells!
-      return td::Status::Error("TODO: absent cells");
-    }
-
-    hashes_offset = 2;
-    auto n = level_mask.get_hashes_count();
-    depth_offset = hashes_offset;
-    data_offset = depth_offset;
-    data_len = (d2 >> 1) + (d2 & 1);
-    data_with_bits = (d2 & 1) != 0;
-    refs_offset = data_offset + data_len;
-    end_offset = refs_offset + refs_cnt * ref_bit_size;
-
-    return td::Status::OK();
-  }
-  td::Result<Ref<DataCell>> custom_create_data_cell(CellBuilder &cb, td::Slice cell_slice,
-                                                                    td::Span<Ref<Cell>> refs) const {
-    DCHECK(refs_cnt == (td::int64)refs.size());
-    for (int k = 0; k < refs_cnt; k++) {
-      cb.store_ref(std::move(refs[k]));
-    }
-    TRY_RESULT(res, cb.finalize_novm_nothrow(special));
-    CHECK(!res.is_null());
-    if (res->is_special() != special) {
-      return td::Status::Error("is_special mismatch");
-    }
-    if (res->get_level_mask() != level_mask) {
-      return td::Status::Error("level mask mismatch");
-    }
-    return res;
-  }
-};
-
 td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Slice cell_slice,
-                                                               td::Span<td::Ref<DataCell>> cells_span) {
+                                                               td::Span<td::Ref<DataCell>> cells_span, BitReader& breader, CustomCellSerializationInfo& cell_info) {
   std::array<td::Ref<Cell>, 4> refs_buf;
 
-  BitReader breader(cell_slice, 0);
-  uint8_t d1 = breader.read_bits(8);
-  uint8_t d2 = breader.read_bits(8);
-
-  std::cerr << "Cell d1, d2 = " << uint16_t(d1) << ' ' << uint16_t(d2) << '\n';
-
-  CustomCellSerializationInfo cell_info;
-  // init_cell_info(cell_info, cell_slice[0], cell_slice[1], info.ref_bit_size);
-  TRY_STATUS(cell_info.custom_init(d1, d2, info.ref_bit_size));
   if (cell_info.end_offset != cell_slice.size()) {
     return td::Status::Error("unused space in cell serialization");
   }
+
+  std::cerr << "Cell refs_cnt = " << cell_info.refs_cnt << '\n';
 
   CellBuilder cb;
   TRY_RESULT(bits, cell_info.custom_get_bits(cell_slice));
@@ -1009,13 +986,12 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
     cb.store_bits(&byte, std::min(8, bits - i * 8));
   }
   std::cerr << '\n';
-  breader.flush_byte();
   // DCHECK(cell_info.data_offset == 2);
   // DCHECK(cell_info.refs_offset == cell_info.data_offset + (bits + 7) / 8);
   // DCHECK(cell_info.end_offset == cell_info.refs_offset + cell_info.refs_cnt * info.ref_bit_size);
 
   auto read_ref = [&]() -> uint64_t {
-    return breader.read_bits(info.ref_bit_size * 8);
+    return breader.read_bits(info.ref_bit_size);
   };
 
   auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
@@ -1033,13 +1009,20 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
     refs[k] = cells_span[cell_count - ref_idx - 1];
   }
 
-  return cell_info.custom_create_data_cell(cb, cell_slice, refs);
+  breader.flush_byte();
+
+  return cell_info.custom_create_data_cell(cb, refs);
 }
 
 td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int max_roots) {
   std::cerr << "Running custom deserialize impl\n";
+  // for (int i = 0; i < data.size(); ++i) {
+  //   std::cerr << uint16_t(uint8_t(data[i])) << ' ';
+  // }
+  // std::cerr << '\n';
   get_og().clear();
-  long long start_offset = info.parse_serialized_header(data);
+  BitReader breader(data, 0);
+  long long start_offset = info.parse_serialized_header(breader);
   if (start_offset == 0) {
     return td::Status::Error(PSLICE() << "cannot deserialize bag-of-cells: invalid header, error " << start_offset);
   }
@@ -1052,10 +1035,9 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     return td::Status::Error("Bag-of-cells has more root cells than expected");
   }
 
-  BitReader breader(data, start_offset);
 
   auto read_ref = [&]() -> uint64_t {
-    return breader.read_bits(info.ref_bit_size * 8);
+    return breader.read_bits(info.ref_bit_size);
   };
 
   cell_count = info.cell_count;
@@ -1071,22 +1053,31 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     }
     roots[i].idx = info.cell_count - idx - 1;
   }
-  auto cells_slice = data.substr(info.data_offset, info.data_size);
   std::vector<Ref<DataCell>> cell_list;
   cell_list.reserve(cell_count);
+  auto start_position = breader.flush_and_get_ptr();
   for (int i = 0; i < cell_count; i++) {
     CustomCellSerializationInfo cell_info;
-    auto status = cell_info.custom_init(cells_slice, info.ref_bit_size);
+    auto d1 = breader.read_bits(8);
+    auto d2 = breader.read_bits(8);
+    std::cerr << "Cell d1, d2 = " << d1 << ' ' << d2 << '\n';
+    auto status = cell_info.custom_init(d1, d2, info.ref_bit_size);
     if (status.is_error()) {
       return td::Status::Error(PSLICE()
                                 << "invalid bag-of-cells failed to deserialize cell #" << i << " " << status.error());
     }
-    auto cell_slice = cells_slice.substr(0, cell_info.end_offset);
-    cells_slice = cells_slice.substr(cell_info.end_offset);
+    std::cerr << "Cell position = " << start_position << ' ' << start_position + cell_info.end_offset << '\n';
+    auto cell_slice = data.substr(start_position, cell_info.end_offset);
+    std::cerr << "Cell slice of size " << cell_slice.size() << '\n';
+    for (int i = 0; i < cell_slice.size(); ++i) {
+      std::cerr << uint16_t(uint8_t(cell_slice[i])) << ' ';
+    }
+    std::cerr << '\n';
+    start_position += cell_info.end_offset;
     // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
     std::cerr << "Loading cell with idx " << idx << '\n';
-    auto r_cell = deserialize_cell(idx, cell_slice, cell_list);
+    auto r_cell = deserialize_cell(idx, cell_slice, cell_list, breader, cell_info);
     if (r_cell.is_error()) {
       return td::Status::Error(PSLICE() << "invalid bag-of-cells failed to deserialize cell #" << idx << " "
                                         << r_cell.error());
