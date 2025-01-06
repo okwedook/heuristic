@@ -17,6 +17,18 @@
 #include "tdutils/td/utils/misc.h"
 #include "tdutils/td/utils/Gzip.h"
 
+std::map<std::string, std::map<int, int>> byte_cnt;
+
+void add_int(const std::string& name, int32_t value) {
+  #ifndef ONLINE_JUDGE
+    ++byte_cnt[name][value];
+  #endif
+}
+
+void add_char(const std::string& name, unsigned char value) {
+  add_int(name, value);
+}
+
 #if __cplusplus >= 201703L
   namespace debug {
     using namespace std;
@@ -1142,6 +1154,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     CustomCellSerializationInfo cell_info;
     auto d1 = breader.read_bits(8);
     auto d2 = breader.read_bits(8);
+    add_char("d1", d1);
     dbg(d1, d2);
     auto status = cell_info.custom_init(d1, d2, info.ref_bit_size);
     if (status.is_error()) {
@@ -1304,13 +1317,17 @@ int main() {
 
   std::cout << td::base64_encode(data) << std::endl;
 
-  // freopen("res/output.txt", "a", stderr);
+  #ifndef ONLINE_JUDGE
+    std::ignore = freopen("res/raw_huffman_data.txt", "a", stdout);
 
-  // std::vector<std::pair<int, int>> stcnt(vm::cnt.begin(), vm::cnt.end());
-  // std::sort(stcnt.begin(), stcnt.end(), [](auto a, auto b) {
-  //   return a.second > b.second;
-  // });
-  // for (auto [v, c] : stcnt) {
-  //   std::cerr << v << ' ' << c << std::endl;
-  // }
+    for (auto &[name, data] : byte_cnt) {
+      std::vector<std::pair<int, int>> st_data(data.begin(), data.end());
+      std::sort(st_data.begin(), st_data.end(), [&](auto a, auto b) {
+        return a.second > b.second;
+      });
+      for (auto [value, count] : st_data) {
+        std::cout << name << ' ' << value << ' ' << count << '\n';
+      }
+    }
+  #endif
 }

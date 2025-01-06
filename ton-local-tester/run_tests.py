@@ -28,6 +28,9 @@ total_points = 0
 
 name_width = max(max(len(s) for s in test_files), 4)
 
+f = open("res/raw_huffman_data.txt", "w")
+f.close()
+
 print(f"{Fore.YELLOW}====================== Running {n_tests} tests ======================{Style.RESET_ALL}")
 print(f"{Fore.YELLOW}Idx  {"Name":<{name_width}} {"Size":>7}   Compression   Decompression {Style.RESET_ALL}")
 
