@@ -17,6 +17,89 @@
 #include "tdutils/td/utils/misc.h"
 #include "tdutils/td/utils/Gzip.h"
 
+#if __cplusplus >= 201703L
+  namespace debug {
+    using namespace std;
+    namespace TypeTraits {
+        template<class T> constexpr bool IsString = false;
+        template<> constexpr bool IsString<string> = true;
+        template<class T, class = void> struct IsIterableStruct : false_type{};
+        template<class T>
+        struct IsIterableStruct<
+            T,
+            void_t<
+                decltype(begin(declval<T>())),
+                decltype(end(declval<T>()))
+            >
+        > : true_type{};
+        template<class T> constexpr bool IsIterable = IsIterableStruct<T>::value;
+        template<class T> constexpr bool NonStringIterable = !IsString<T> && IsIterable<T>;
+        template<class T> constexpr bool DoubleIterable = IsIterable<decltype(*begin(declval<T>()))>;
+    };
+    // Declaration (for cross-recursion)
+    template<class T>
+    auto pdbg(const T&x) -> enable_if_t<!TypeTraits::NonStringIterable<T>, string>;
+    string pdbg(const string &x);
+    template<class T>
+    auto pdbg(const T &x) -> enable_if_t<TypeTraits::NonStringIterable<T>, string>;
+    template<class T, class U>
+    string pdbg(const pair<T, U> &x);
+
+    // Implementation
+    template<class T>
+    auto pdbg(const T &x) -> enable_if_t<!TypeTraits::NonStringIterable<T>, string> {
+        stringstream ss;
+        ss << x;
+        return ss.str();
+    }
+    template<class T, class U>
+    string pdbg(const pair<T, U> &x) {
+        return "{" + pdbg(x.f) + "," + pdbg(x.s) + "}";
+    }
+    string pdbg(const string &x) {
+        return "\"" + x + "\"";
+    }
+    template<class T>
+    auto pdbg(const T &x) -> enable_if_t<TypeTraits::NonStringIterable<T>, string> {
+        auto begin = x.begin();
+        auto end = x.end();
+        string del = "";
+        if (TypeTraits::DoubleIterable<T>) {
+            del = "\n";
+        }
+        string ans;
+        ans += "{" + del;
+        if (begin != end) ans += pdbg(*begin++);
+        while (begin != end) {
+            ans += "," + del + pdbg(*begin++);
+        }
+        ans += del + "}";
+        return ans;
+    }
+    template<class T> string dbgout(const T &x) { return pdbg(x); }
+    template<class T, class... U>
+    string dbgout(T const &t, const U &... u) {
+        string ans = pdbg(t);
+        ans += ", ";
+        ans += dbgout(u...);
+        return ans;
+    }
+  };
+#endif
+
+#ifndef ONLINE_JUDGE
+    void flush() { std::cerr << std::flush; }
+    void flushln() { std::cerr << std::endl; }
+    template<class T> void print(const T &x) { std::cerr << x; }
+    template<class T, class ...U> void print(const T &x, const U&... u) { print(x); print(u...); }
+    template<class ...T> void println(const T&... u) { print(u..., '\n'); }
+    #define dbg(...) print("[", #__VA_ARGS__, "] = ", debug::dbgout(__VA_ARGS__)), flushln()
+    #define msg(...) print("[", __VA_ARGS__, "]"), flushln()
+#else
+    #define dbg(...) 0
+    #define msg(...) 0
+#endif
+
 namespace BWT {
 
 using namespace std;
@@ -771,7 +854,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
   // offset_bit_size = ptr[1];
   offset_bit_size = breader.read_bits(5);
 
-  std::cerr << "Ref/offset bit size = " << ref_bit_size << ' ' << offset_bit_size << '\n';
+  dbg(ref_bit_size, offset_bit_size);
   if (offset_bit_size > 4 * 8 || offset_bit_size < 1) {
     return 0;
   }
@@ -823,7 +906,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
 template <typename WriterT>
 td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   BitWriter bwriter(writer);
-  std::cerr << "Running custom serialize impl\n";
+  msg("Running custom serialize impl");
   auto store_ref = [&](unsigned long long value) { bwriter.write_bits(value, info.ref_bit_size); };
   auto store_offset = [&](unsigned long long value) { bwriter.write_bits(value, info.offset_bit_size); };
 
@@ -852,14 +935,14 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   bwriter.flush_byte();
   for (int i = cell_count - 1; i >= 0; --i) {
     int idx = cell_count - 1 - i;
-    std::cerr << "Saving cell with idx " << i << " with refnum " << int(cell_list_[idx].ref_num) << '\n';
+    msg("Saving cell with idx ", i, " with refnum ", int(cell_list_[idx].ref_num));
     auto start_position = writer.position();
     const auto& dc_info = cell_list_[idx];
     const Ref<DataCell>& dc = dc_info.dc_ref;
     unsigned char buf[256];
     int s = dc->serialize(buf, 256);
-    std::cerr << "Cell serialized size = " << s << '\n';
-    std::cerr << "Cell d1, d2 = " << uint16_t(buf[0]) << ' ' << uint16_t(buf[1]) << '\n';
+    msg("Cell serialized size = ", s);
+    msg("Cell d1, d2 = ", uint16_t(buf[0]), ' ', uint16_t(buf[1]));
     // writer.store_bytes(buf, s);
     for (int i = 0; i < s; ++i) {
       // std::cerr << "Saving byte " << uint16_t(buf[i]) << '\n';
@@ -868,18 +951,18 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     DCHECK(dc->size_refs() == dc_info.ref_num);
     for (unsigned j = 0; j < dc_info.ref_num; ++j) {
       int k = cell_count - 1 - dc_info.ref_idx[j];
-      std::cerr << "Link from " << i << " to " << k << '\n';
+      msg("Link from ", i, " to ", k);
       DCHECK(k > i && k < cell_count);
       store_ref(k - i - 1);
     }
     bwriter.flush_byte();
     auto end_position = writer.position();
-    std::cerr << "Cell position " << start_position << ' ' << end_position << '\n';
+    msg("Cell position ", start_position, ' ', end_position);
   }
   writer.chk();
   // DCHECK(writer.position() - keep_position == info.data_size);
   // DCHECK(writer.empty());
-  std::cerr << "Writer position " << writer.position() << '\n';
+  dbg(writer.position());
   return writer.position();
 }
 
@@ -910,7 +993,7 @@ td::uint64 CustomBagOfCells::compute_sizes(int& r_size, int& o_size) {
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 std::size_t CustomBagOfCells::estimate_serialized_size() {
   auto data_bytes_adj = compute_sizes(info.ref_bit_size, info.offset_bit_size);
-  std::cerr << "Ref/offset bit size = " << info.ref_bit_size << ' ' << info.offset_bit_size << '\n';
+  dbg(info.ref_bit_size, info.offset_bit_size);
   if (!data_bytes_adj) {
     info.invalidate();
     return 0;
@@ -952,7 +1035,7 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   td::BufferSlice res(size_est);
   TRY_RESULT(size, serialize_to(const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(res.data())),
                                 res.size()));
-  std::cerr << "res.size() = " << size << ' ' << res.size() << '\n';
+  dbg(size, res.size());
   if (size <= res.size()) {
     res.truncate(size);
     return std::move(res);
@@ -969,11 +1052,11 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
     return td::Status::Error("unused space in cell serialization");
   }
 
-  std::cerr << "Cell refs_cnt = " << cell_info.refs_cnt << '\n';
+  dbg(cell_info.refs_cnt);
 
   CellBuilder cb;
   TRY_RESULT(bits, cell_info.custom_get_bits(cell_slice));
-  std::cerr << "Cell bits size = " << bits << '\n';
+  msg("Cell bits size = ", bits);
   // for (int i = 0; i < bits; ++i) {
   //   uint8_t bit = breader.read_bit();
   //   std::cerr << int(bit);
@@ -985,7 +1068,6 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
     // std::cerr << "Loaded byte " << uint16_t(byte) << '\n';
     cb.store_bits(&byte, std::min(8, bits - i * 8));
   }
-  std::cerr << '\n';
   // DCHECK(cell_info.data_offset == 2);
   // DCHECK(cell_info.refs_offset == cell_info.data_offset + (bits + 7) / 8);
   // DCHECK(cell_info.end_offset == cell_info.refs_offset + cell_info.refs_cnt * info.ref_bit_size);
@@ -1015,7 +1097,7 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
 }
 
 td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int max_roots) {
-  std::cerr << "Running custom deserialize impl\n";
+  msg("Running custom deserialize impl");
   // for (int i = 0; i < data.size(); ++i) {
   //   std::cerr << uint16_t(uint8_t(data[i])) << ' ';
   // }
@@ -1060,30 +1142,29 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     CustomCellSerializationInfo cell_info;
     auto d1 = breader.read_bits(8);
     auto d2 = breader.read_bits(8);
-    std::cerr << "Cell d1, d2 = " << d1 << ' ' << d2 << '\n';
+    dbg(d1, d2);
     auto status = cell_info.custom_init(d1, d2, info.ref_bit_size);
     if (status.is_error()) {
       return td::Status::Error(PSLICE()
                                 << "invalid bag-of-cells failed to deserialize cell #" << i << " " << status.error());
     }
-    std::cerr << "Cell position = " << start_position << ' ' << start_position + cell_info.end_offset << '\n';
+    dbg(start_position, start_position + cell_info.end_offset);
     auto cell_slice = data.substr(start_position, cell_info.end_offset);
-    std::cerr << "Cell slice of size " << cell_slice.size() << '\n';
-    for (int i = 0; i < cell_slice.size(); ++i) {
-      std::cerr << uint16_t(uint8_t(cell_slice[i])) << ' ';
-    }
-    std::cerr << '\n';
+    dbg(cell_slice.size());
+    // for (int i = 0; i < cell_slice.size(); ++i) {
+    //   std::cerr << uint16_t(uint8_t(cell_slice[i])) << ' ';
+    // }
+    // std::cerr << '\n';
     start_position += cell_info.end_offset;
     // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
-    std::cerr << "Loading cell with idx " << idx << '\n';
+    msg("Loading cell with idx ", idx);
     auto r_cell = deserialize_cell(idx, cell_slice, cell_list, breader, cell_info);
     if (r_cell.is_error()) {
       return td::Status::Error(PSLICE() << "invalid bag-of-cells failed to deserialize cell #" << idx << " "
                                         << r_cell.error());
     }
     cell_list.push_back(r_cell.move_as_ok());
-    std::cerr << " with refnum " << (*cell_list.back().get()).get_refs_cnt() << '\n';
     DCHECK(cell_list.back().not_null());
   }
   auto end_offset = breader.flush_and_get_ptr();
