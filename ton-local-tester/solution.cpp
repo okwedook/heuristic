@@ -109,7 +109,7 @@ namespace log_level {
     SKIP = 1000 // Logs, that are never written
   };
 
-  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::BIT;
+  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ALWAYS;
 
   static constexpr auto ENCODER_BUILD = LOG_LEVEL::BYTE;
   static constexpr auto BIT_IO = LOG_LEVEL::BIT;
@@ -502,6 +502,7 @@ private:
 
 static const HuffmanEncoder d1(huffman_data.at("d1"), "d1");
 static const HuffmanEncoder d2(huffman_data.at("d2"), "d2");
+static const HuffmanEncoder cell_data(huffman_data.at("cell_data"), "cell_data");
 HuffmanEncoderWithDefault ref_diff;
 
 void init_ref_diff(int cell_count) {
@@ -850,8 +851,9 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       // std::cerr << "Saving byte " << uint16_t(buf[i]) << '\n';
       add_char("cell_data", buf[i]);
       bwriter.write_bits(buf[i], 8);
+      // huffman::cell_data.write(bwriter, buf[i]);
     }
-    bwriter.flush_byte();
+    // bwriter.flush_byte();
     DCHECK(dc->size_refs() == dc_info.ref_num);
     for (unsigned j = 0; j < dc_info.ref_num; ++j) {
       int k = cell_count - 1 - dc_info.ref_idx[j];
@@ -865,7 +867,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     auto end_position = writer.position();
     MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
   }
-  bwriter.flush_byte();
+  bwriter.flush_byte(); // It's important to write the last byte, otherwise it will stay in the buffer
   writer.chk();
   // DCHECK(writer.position() - keep_position == info.data_size);
   // DCHECK(writer.empty());
@@ -945,7 +947,12 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
   breader.flush_byte();
 
   CellBuilder cb;
-  auto cell_slice = breader.get_data().substr(breader.get_ptr(), cell_info.data_len);
+  td::BufferSlice cell_slice(cell_info.data_len);
+  for (int i = 0; i < cell_info.data_len; ++i) {
+    uint8_t byte = breader.read_bits(8);
+    // uint8_t byte = huffman::cell_data.read(breader);
+    cell_slice.data()[i] = byte;
+  }
   TRY_RESULT(bits, cell_info.custom_get_bits(cell_slice));
   MSG(log_level::CELL_META, "Cell bits size = ", bits);
   // for (int i = 0; i < bits; ++i) {
@@ -954,16 +961,12 @@ td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td
   //   unsigned char* ptr = static_cast<unsigned char*>(&bit);
   //   cb.store_bits(ptr, 1, 0);
   // }
-  for (int i = 0; i < (bits + 7) / 8; ++i) {
-    uint8_t byte = breader.read_bits(8);
-    // std::cerr << "Loaded byte " << uint16_t(byte) << '\n';
-    cb.store_bits(&byte, std::min(8, bits - i * 8));
-  }
+  cb.store_bits(cell_slice.data(), bits);
   // DCHECK(cell_info.data_offset == 2);
   // DCHECK(cell_info.refs_offset == cell_info.data_offset + (bits + 7) / 8);
   // DCHECK(cell_info.end_offset == cell_info.refs_offset + cell_info.refs_cnt * info.ref_bit_size);
 
-  breader.flush_byte();
+  // breader.flush_byte();
 
   std::array<td::Ref<Cell>, 4> refs_buf;
 
