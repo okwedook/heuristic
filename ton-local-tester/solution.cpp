@@ -142,6 +142,7 @@ namespace log_level {
 #endif
 
 namespace settings {
+  bool use_bwt = false;
   enum class CELL_DATA_ORDER {
     d1,
     d2,
@@ -151,12 +152,8 @@ namespace settings {
     flush_byte
   };
   static const std::vector<std::vector<enum CELL_DATA_ORDER>> save_data_order = {
-    {CELL_DATA_ORDER::d1,
-    CELL_DATA_ORDER::d2,
-    CELL_DATA_ORDER::cell_type,
-    CELL_DATA_ORDER::flush_byte,
-    CELL_DATA_ORDER::cell_data,
-    CELL_DATA_ORDER::cell_refs,}
+    {CELL_DATA_ORDER::cell_type,CELL_DATA_ORDER::d2,CELL_DATA_ORDER::d1,CELL_DATA_ORDER::cell_refs,CELL_DATA_ORDER::flush_byte,},
+    {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::cell_data}
   };
 };
 
@@ -1232,18 +1229,16 @@ td::BufferSlice inverseBWT(td::Slice data) {
   return std::move(BWT::from_byte_buffer(inverse_bwt));
 }
 
-bool use_bwt = false;
-
 td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
   td::BufferSlice serialized = vm::custom_boc_serialize(root).move_as_ok();
-  auto with_bwt = use_bwt ? td::BufferSlice(applyBWT(std::move(serialized))) : std::move(serialized);
+  auto with_bwt = settings::use_bwt ? td::BufferSlice(applyBWT(std::move(serialized))) : std::move(serialized);
   return apply_final_compression(std::move(with_bwt));
 }
 
 td::BufferSlice decompress(td::Slice data) {
   auto decompressed = invert_final_compression(data);
-  auto without_bwt = use_bwt ? inverseBWT(std::move(decompressed)) : std::move(decompressed);
+  auto without_bwt = settings::use_bwt ? inverseBWT(std::move(decompressed)) : std::move(decompressed);
   vm::Ref<vm::Cell> root = vm::custom_boc_deserialize(without_bwt).move_as_ok();
   return vm::std_boc_serialize(root, 31).move_as_ok();
 }
