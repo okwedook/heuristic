@@ -787,7 +787,7 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
   }
   DBG(log_level::COMPRESSION_META, cell_count);
   huffman::init_ref_diff(cell_count);
-  root_count = (int)read_ref();
+  root_count = 1;
   if (root_count <= 0) {
     root_count = -1;
     return 0;
@@ -825,12 +825,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 
   store_ref(cell_count);
   huffman::init_ref_diff(cell_count);
-  store_ref(root_count);
-  for (const auto& root_info : roots) {
-    int k = cell_count - 1 - root_info.idx;
-    DCHECK(k >= 0 && k < cell_count);
-    store_ref(k);
-  }
   // DCHECK(writer.position() == info.index_offset);
   DCHECK((unsigned)cell_count == cell_list_.size());
   // DCHECK(writer.position() == info.data_offset);
@@ -1061,16 +1055,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   cell_count = info.cell_count;
   roots.clear();
   roots.resize(info.root_count);
-  for (int i = 0; i < info.root_count; i++) {
-    int idx = 0;
-    if (info.has_roots) {
-      idx = (int)read_ref();
-    }
-    if (idx < 0 || idx >= info.cell_count) {
-      return td::Status::Error(PSLICE() << "bag-of-cells invalid root index " << idx);
-    }
-    roots[i].idx = info.cell_count - idx - 1;
-  }
+  roots[0].idx = info.cell_count - 1;
   std::vector<Ref<DataCell>> cell_list;
   cell_list.reserve(cell_count);
   auto start_position = breader.flush_and_get_ptr();
