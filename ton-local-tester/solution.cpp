@@ -150,13 +150,13 @@ namespace settings {
     cell_refs,
     flush_byte
   };
-  static const std::vector<enum CELL_DATA_ORDER> save_data_order = {
-    CELL_DATA_ORDER::d1,
+  static const std::vector<std::vector<enum CELL_DATA_ORDER>> save_data_order = {
+    {CELL_DATA_ORDER::d1,
     CELL_DATA_ORDER::d2,
     CELL_DATA_ORDER::cell_type,
     CELL_DATA_ORDER::flush_byte,
     CELL_DATA_ORDER::cell_data,
-    CELL_DATA_ORDER::cell_refs,
+    CELL_DATA_ORDER::cell_refs,}
   };
 };
 
@@ -844,84 +844,86 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     serialized_cells[i].resize(s);
   }
 
-  for (int i = cell_count - 1; i >= 0; --i) {
-    int idx = cell_count - 1 - i;
-    MSG(log_level::CELL_META, "Saving cell with idx ", i, " with refnum ", int(cell_list_[idx].ref_num));
-    auto start_position = bwriter.position();
-    const auto& dc_info = cell_list_[idx];
-    const Ref<DataCell>& dc = dc_info.dc_ref;
-    int s = serialized_cells[i].size();
-    auto* buf = serialized_cells[i].data();
-    MSG(log_level::CELL_META, "Cell d1, d2 = ", uint16_t(buf[0]), ' ', uint16_t(buf[1]));
-    auto store_cell_data = [&]() {
-      for (int i = 3; i < s; ++i) {
-        MSG(log_level::LOG_LEVEL::BYTE, "Saving byte ", uint16_t(buf[i]));
-        add_char("cell_data", buf[i]);
-        bwriter.write_bits(buf[i], 8);
-        // huffman::cell_data.write(bwriter, buf[i]);
+  for (auto stored_data : settings::save_data_order) {
+    for (int i = cell_count - 1; i >= 0; --i) {
+      int idx = cell_count - 1 - i;
+      MSG(log_level::CELL_META, "Saving cell with idx ", i, " with refnum ", int(cell_list_[idx].ref_num));
+      auto start_position = bwriter.position();
+      const auto& dc_info = cell_list_[idx];
+      const Ref<DataCell>& dc = dc_info.dc_ref;
+      int s = serialized_cells[i].size();
+      auto* buf = serialized_cells[i].data();
+      MSG(log_level::CELL_META, "Cell d1, d2 = ", uint16_t(buf[0]), ' ', uint16_t(buf[1]));
+      auto store_cell_data = [&]() {
+        for (int i = 3; i < s; ++i) {
+          MSG(log_level::LOG_LEVEL::BYTE, "Saving byte ", uint16_t(buf[i]));
+          add_char("cell_data", buf[i]);
+          bwriter.write_bits(buf[i], 8);
+          // huffman::cell_data.write(bwriter, buf[i]);
+        }
+      };
+      auto store_cell_refs = [&]() {
+        DCHECK(dc->size_refs() == dc_info.ref_num);
+        for (unsigned j = 0; j < dc_info.ref_num; ++j) {
+          int k = cell_count - 1 - dc_info.ref_idx[j];
+          MSG(log_level::CELL_META, "Link from ", i, " to ", k);
+          DCHECK(k > i && k < cell_count);
+          int ref_diff = k - i - 1;
+          add_int("ref_diff", ref_diff);
+          // huffman::ref_diff.write(bwriter, ref_diff);
+          store_ref(ref_diff);
+        }
+      };
+      auto store_prunned_branch = [&]() {
+        int l = s - 4;
+        DCHECK(l % 34 == 0);
+        l /= 34;
+        for (int x = 0; x < l; ++x) {
+          int id = 4 + 32 * l + 2 * x;
+          int val = (uint16_t(buf[id]) << 8) | uint16_t(buf[id + 1]);
+          add_int("byte_depth", val);
+        }
+        store_cell_data();
+      };
+      uint16_t d1 = buf[0];
+      bool is_special = d1 & 8;
+      uint16_t d2 = buf[1];
+      uint16_t cell_type = buf[2];
+      for (auto mode : stored_data) {
+        switch (mode) {
+          case settings::CELL_DATA_ORDER::d1:
+            add_char("d1", d1);
+            huffman::d1.write(bwriter, d1);
+            break;
+          case settings::CELL_DATA_ORDER::d2:
+            add_char("d2", d2);
+            huffman::d2.write(bwriter, d2);
+            break;
+          case settings::CELL_DATA_ORDER::cell_type:
+            add_char("cell_type", cell_type);
+            huffman::cell_type.write(bwriter, cell_type);
+            break;
+          case settings::CELL_DATA_ORDER::flush_byte:
+            bwriter.flush_byte();
+            break;
+          case settings::CELL_DATA_ORDER::cell_data:
+            if (is_special && cell_type == 1) {
+              store_prunned_branch();
+            } else {
+              store_cell_data();
+            }
+            break;
+          case settings::CELL_DATA_ORDER::cell_refs:
+            store_cell_refs();
+            break;
+          default:
+            throw std::logic_error("Not implemented data saving");
+            break;
+        }
       }
-    };
-    auto store_cell_refs = [&]() {
-      DCHECK(dc->size_refs() == dc_info.ref_num);
-      for (unsigned j = 0; j < dc_info.ref_num; ++j) {
-        int k = cell_count - 1 - dc_info.ref_idx[j];
-        MSG(log_level::CELL_META, "Link from ", i, " to ", k);
-        DCHECK(k > i && k < cell_count);
-        int ref_diff = k - i - 1;
-        add_int("ref_diff", ref_diff);
-        // huffman::ref_diff.write(bwriter, ref_diff);
-        store_ref(ref_diff);
-      }
-    };
-    auto store_prunned_branch = [&]() {
-      int l = s - 4;
-      DCHECK(l % 34 == 0);
-      l /= 34;
-      for (int x = 0; x < l; ++x) {
-        int id = 4 + 32 * l + 2 * x;
-        int val = (uint16_t(buf[id]) << 8) | uint16_t(buf[id + 1]);
-        add_int("byte_depth", val);
-      }
-      store_cell_data();
-    };
-    uint16_t d1 = buf[0];
-    bool is_special = d1 & 8;
-    uint16_t d2 = buf[1];
-    uint16_t cell_type = buf[2];
-    for (auto mode : settings::save_data_order) {
-      switch (mode) {
-        case settings::CELL_DATA_ORDER::d1:
-          add_char("d1", d1);
-          huffman::d1.write(bwriter, d1);
-          break;
-        case settings::CELL_DATA_ORDER::d2:
-          add_char("d2", d2);
-          huffman::d2.write(bwriter, d2);
-          break;
-        case settings::CELL_DATA_ORDER::cell_type:
-          add_char("cell_type", cell_type);
-          huffman::cell_type.write(bwriter, cell_type);
-          break;
-        case settings::CELL_DATA_ORDER::flush_byte:
-          bwriter.flush_byte();
-          break;
-        case settings::CELL_DATA_ORDER::cell_data:
-          if (is_special && cell_type == 1) {
-            store_prunned_branch();
-          } else {
-            store_cell_data();
-          }
-          break;
-        case settings::CELL_DATA_ORDER::cell_refs:
-          store_cell_refs();
-          break;
-        default:
-          throw std::logic_error("Not implemented data saving");
-          break;
-      }
+      auto end_position = bwriter.position();
+      MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
     }
-    auto end_position = bwriter.position();
-    MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
   }
   bwriter.flush_byte(); // It's important to write the last byte, otherwise it will stay in the buffer
   writer.chk();
@@ -1041,56 +1043,58 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   std::vector<Ref<DataCell>> cell_list;
   cell_list.reserve(cell_count);
   std::vector<LoadCellData> cell_data(cell_count);
-  for (int i = 0; i < cell_count; i++) {
-    int idx = cell_count - 1 - i;
-    MSG(log_level::CELL_META, "Deserializing cell with idx ", idx);
-    auto& cell_info = cell_data[i];
+  for (auto stored_data : settings::save_data_order) {
+    for (int i = 0; i < cell_count; i++) {
+      int idx = cell_count - 1 - i;
+      MSG(log_level::CELL_META, "Deserializing cell with idx ", idx);
+      auto& cell_info = cell_data[i];
 
-    for (auto mode : settings::save_data_order) {
-      switch (mode) {
-        case settings::CELL_DATA_ORDER::d1:
-          cell_info.d1 = huffman::d1.read(breader);
-          break;
-        case settings::CELL_DATA_ORDER::d2:
-          cell_info.d2 = huffman::d2.read(breader);
-          break;
-        case settings::CELL_DATA_ORDER::cell_type:
-          cell_info.cell_type = huffman::cell_type.read(breader);
-          break;
-        case settings::CELL_DATA_ORDER::flush_byte:
-          breader.flush_byte();
-          break;
-        case settings::CELL_DATA_ORDER::cell_data: {
-          // Loading d1 and d2 must happen before cell_data
-          auto status = cell_info.init_ser_info();
-          if (status.is_error()) {
-            return status;
+      for (auto mode : stored_data) {
+        switch (mode) {
+          case settings::CELL_DATA_ORDER::d1:
+            cell_info.d1 = huffman::d1.read(breader);
+            break;
+          case settings::CELL_DATA_ORDER::d2:
+            cell_info.d2 = huffman::d2.read(breader);
+            break;
+          case settings::CELL_DATA_ORDER::cell_type:
+            cell_info.cell_type = huffman::cell_type.read(breader);
+            break;
+          case settings::CELL_DATA_ORDER::flush_byte:
+            breader.flush_byte();
+            break;
+          case settings::CELL_DATA_ORDER::cell_data: {
+            // Loading d1 and d2 must happen before cell_data
+            auto status = cell_info.init_ser_info();
+            if (status.is_error()) {
+              return status;
+            }
+            int data_len = cell_info.ser_info.value().data_len;
+            for (int i = 1; i < data_len; ++i) {
+              uint8_t byte = breader.read_bits(8);
+              // uint8_t byte = huffman::cell_data.read(breader);
+              cell_info.data[i] = byte;
+            }
+            break; 
           }
-          int data_len = cell_info.ser_info.value().data_len;
-          for (int i = 1; i < data_len; ++i) {
-            uint8_t byte = breader.read_bits(8);
-            // uint8_t byte = huffman::cell_data.read(breader);
-            cell_info.data[i] = byte;
+          case settings::CELL_DATA_ORDER::cell_refs: {
+            // Loading d1 and d2 must happen before cell_refs
+            auto status = cell_info.init_ser_info();
+            if (status.is_error()) {
+              return status;
+            }
+            int refs_count = cell_info.get_ser_info().refs_cnt;
+            DBG(log_level::CELL_META, refs_count);
+            cell_info.ref_diffs.resize(refs_count);
+            for (auto &diff : cell_info.ref_diffs) {
+              diff = breader.read_bits(info.ref_bit_size);
+            }
+            break;
           }
-          break; 
+          
+          default:
+            throw std::logic_error("Loading data not implemented");
         }
-        case settings::CELL_DATA_ORDER::cell_refs: {
-          // Loading d1 and d2 must happen before cell_refs
-          auto status = cell_info.init_ser_info();
-          if (status.is_error()) {
-            return status;
-          }
-          int refs_count = cell_info.get_ser_info().refs_cnt;
-          DBG(log_level::CELL_META, refs_count);
-          cell_info.ref_diffs.resize(refs_count);
-          for (auto &diff : cell_info.ref_diffs) {
-            diff = breader.read_bits(info.ref_bit_size);
-          }
-          break;
-        }
-        
-        default:
-          throw std::logic_error("Loading data not implemented");
       }
     }
   }
