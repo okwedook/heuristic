@@ -397,8 +397,6 @@ static const std::map<std::string, distribution_data> huffman_data = {
 };
 
 
-
-
 struct HuffmanEncoder {
   HuffmanEncoder() {}
   HuffmanEncoder(const distribution_data& data, const std::string name) {
@@ -869,16 +867,13 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     int s = serialized_cells[i].size();
     auto* buf = serialized_cells[i].data();
     MSG(log_level::CELL_META, "Cell d1, d2 = ", uint16_t(buf[0]), ' ', uint16_t(buf[1]));
-    // writer.store_bytes(buf, s);
     auto store_cell_data = [&]() {
-      bwriter.flush_byte();
       for (int i = 3; i < s; ++i) {
         MSG(log_level::LOG_LEVEL::BYTE, "Saving byte ", uint16_t(buf[i]));
         add_char("cell_data", buf[i]);
         bwriter.write_bits(buf[i], 8);
         // huffman::cell_data.write(bwriter, buf[i]);
       }
-      // bwriter.flush_byte();
     };
     auto store_cell_refs = [&]() {
       DCHECK(dc->size_refs() == dc_info.ref_num);
@@ -901,31 +896,47 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
         int val = (uint16_t(buf[id]) << 8) | uint16_t(buf[id + 1]);
         add_int("byte_depth", val);
       }
-      // l /= 34;
-      // DCHECK(buf[3] <= 3);
       store_cell_data();
     };
     uint16_t d1 = buf[0];
     bool is_special = d1 & 8;
     uint16_t d2 = buf[1];
-    huffman::d1.write(bwriter, d1);
-    huffman::d2.write(bwriter, d2);
     uint16_t cell_type = buf[2];
-    huffman::cell_type.write(bwriter, cell_type);
-    add_char("cell_type", cell_type);
-    if (is_special && cell_type == 1) {
-      store_prunned_branch();
-    } else {
-      store_cell_data();
+    for (auto mode : settings::save_data_order) {
+      switch (mode) {
+        case settings::CELL_DATA_ORDER::d1:
+          huffman::d1.write(bwriter, d1);
+          break;
+        case settings::CELL_DATA_ORDER::d2:
+          huffman::d2.write(bwriter, d2);
+          break;
+        case settings::CELL_DATA_ORDER::cell_type:
+          add_char("cell_type", cell_type);
+          huffman::cell_type.write(bwriter, cell_type);
+          break;
+        case settings::CELL_DATA_ORDER::flush_byte:
+          bwriter.flush_byte();
+          break;
+        case settings::CELL_DATA_ORDER::cell_data:
+          if (is_special && cell_type == 1) {
+            store_prunned_branch();
+          } else {
+            store_cell_data();
+          }
+          break;
+        case settings::CELL_DATA_ORDER::cell_refs:
+          store_cell_refs();
+          break;
+        default:
+          throw std::logic_error("Not implemented data saving");
+          break;
+      }
     }
-    store_cell_refs();
     auto end_position = bwriter.position();
     MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
   }
   bwriter.flush_byte(); // It's important to write the last byte, otherwise it will stay in the buffer
   writer.chk();
-  // DCHECK(writer.position() - keep_position == info.data_size);
-  // DCHECK(writer.empty());
   DBG(log_level::COMPRESSION_META, writer.position());
   return writer.position();
 }
