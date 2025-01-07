@@ -869,11 +869,32 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
         store_ref(ref_diff);
       }
     };
-    huffman::d1.write(bwriter, buf[0]);
-    huffman::d2.write(bwriter, buf[1]);
-    huffman::cell_type.write(bwriter, buf[2]);
-    add_char("cell_type", buf[2]);
-    store_cell_data();
+    auto store_prunned_branch = [&]() {
+      int l = s - 4;
+      DCHECK(l % 34 == 0);
+      l /= 34;
+      for (int x = 0; x < l; ++x) {
+        int id = 4 + 32 * l + 2 * x;
+        int val = (uint16_t(buf[id]) << 8) | uint16_t(buf[id + 1]);
+        add_int("byte_depth", val);
+      }
+      // l /= 34;
+      // DCHECK(buf[3] <= 3);
+      store_cell_data();
+    };
+    uint16_t d1 = buf[0];
+    bool is_special = d1 & 8;
+    uint16_t d2 = buf[1];
+    huffman::d1.write(bwriter, d1);
+    huffman::d2.write(bwriter, d2);
+    uint16_t cell_type = buf[2];
+    huffman::cell_type.write(bwriter, cell_type);
+    add_char("cell_type", cell_type);
+    if (is_special && cell_type == 1) {
+      store_prunned_branch();
+    } else {
+      store_cell_data();
+    }
     store_cell_refs();
     auto end_position = writer.position();
     MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
