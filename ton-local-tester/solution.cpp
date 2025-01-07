@@ -9,6 +9,8 @@
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
+#include <optional>
+#include <vector>
 #include "td/utils/lz4.h"
 #include "td/utils/base64.h"
 #include "vm/boc.h"
@@ -562,20 +564,8 @@ struct CustomCellSerializationInfo : public CellSerializationInfo {
         return td::narrow_cast<int>(data_len * 8);
       }
   }
-  td::Status custom_init(td::Slice data, int ref_bit_size) {
-    if (data.size() < 2) {
-      return td::Status::Error(PSLICE() << "Not enough bytes " << td::tag("got", data.size())
-                                        << td::tag("expected", "at least 2"));
-    }
-    TRY_STATUS(custom_init(data.ubegin()[0], data.ubegin()[1], ref_bit_size));
-    if (data.size() < end_offset) {
-      return td::Status::Error(PSLICE() << "Not enough bytes " << td::tag("got", data.size())
-                                        << td::tag("expected", end_offset));
-    }
-    return td::Status::OK();
-  }
 
-  td::Status custom_init(td::uint8 d1, td::uint8 d2, int ref_bit_size) {
+  td::Status custom_init(td::uint8 d1, td::uint8 d2) {
     refs_cnt = d1 & 7;
     level_mask = Cell::LevelMask(d1 >> 5);
     special = (d1 & 8) != 0;
@@ -838,13 +828,9 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   }
   bwriter.write_bits(info.ref_bit_size, 5);
 
-
   store_ref(cell_count);
   huffman::init_ref_diff(cell_count);
-  // DCHECK(writer.position() == info.index_offset);
   DCHECK((unsigned)cell_count == cell_list_.size());
-  // DCHECK(writer.position() == info.data_offset);
-  // bwriter.flush_byte();
 
   std::vector<std::vector<uint8_t>> serialized_cells(cell_count, std::vector<uint8_t>(256));
 
@@ -905,9 +891,11 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     for (auto mode : settings::save_data_order) {
       switch (mode) {
         case settings::CELL_DATA_ORDER::d1:
+          add_char("d1", d1);
           huffman::d1.write(bwriter, d1);
           break;
         case settings::CELL_DATA_ORDER::d2:
+          add_char("d2", d2);
           huffman::d2.write(bwriter, d2);
           break;
         case settings::CELL_DATA_ORDER::cell_type:
@@ -992,7 +980,7 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   if (!size_est) {
     return td::Status::Error("no cells to serialize to this bag of cells");
   }
-  int buff_size = 2 << 20;
+  int buff_size = 4 << 20;
   td::BufferSlice res(buff_size);
   TRY_RESULT(size, serialize_to(const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(res.data())),
                                 res.size()));
@@ -1005,70 +993,33 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   }
 }
 
-td::Result<td::Ref<vm::DataCell>> CustomBagOfCells::deserialize_cell(int idx, td::Span<td::Ref<DataCell>> cells_span,
-                                                                     BitReader& breader, CustomCellSerializationInfo& cell_info) {
-
-  CellBuilder cb;
-  td::BufferSlice cell_slice(cell_info.data_len);
-
-  auto load_cell_data = [&]() {
-    breader.flush_byte();
-    for (int i = 1; i < cell_info.data_len; ++i) {
-      uint8_t byte = breader.read_bits(8);
-      // uint8_t byte = huffman::cell_data.read(breader);
-      cell_slice.data()[i] = byte;
+struct LoadCellData {
+  int d1 = -1, d2 = -1, cell_type = -1;
+  std::vector<uint8_t> data;
+  std::vector<int> ref_diffs;
+  std::optional<CustomCellSerializationInfo> ser_info;
+  td::Status init_ser_info() {
+    if (ser_info.has_value()) return td::Status::OK();
+    DBG(log_level::CELL_META, d1, d2);
+    ser_info = CustomCellSerializationInfo();
+    auto status = ser_info.value().custom_init(d1, d2);
+    if (status.is_error()) {
+      return status;
     }
-    TRY_RESULT(bits, cell_info.custom_get_bits(cell_slice));
-    MSG(log_level::CELL_META, "Cell bits size = ", bits);
-    cb.store_bits(cell_slice.data(), bits);
-
-    // breader.flush_byte();
-    return td::Status::OK();
-  };
-
-  std::array<td::Ref<Cell>, 4> refs_buf;
-  auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
-
-  auto load_cell_refs = [&]() {
-    DBG(log_level::CELL_META, cell_info.refs_cnt);
-
-    for (int k = 0; k < cell_info.refs_cnt; k++) {
-      // int ref_diff = huffman::ref_diff.read(breader);
-      int ref_diff = breader.read_bits(info.ref_bit_size);
-      int ref_idx = idx + 1 + ref_diff;
-      if (ref_idx <= idx) {
-        return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
-                                          << " is to cell #" << ref_idx << " with smaller index");
-      }
-      if (ref_idx >= cell_count) {
-        return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
-                                          << " is to non-existent cell #" << ref_idx << ", only " << cell_count
-                                          << " cells are defined");
-      }
-      refs[k] = cells_span[cell_count - ref_idx - 1];
+    data.resize(256);
+    data.resize(ser_info.value().data_len);
+    if (data.size() > 0) {
+      data[0] = cell_type;
     }
     return td::Status::OK();
-  };
-
-  cell_slice.data()[0] = huffman::cell_type.read(breader);
-  auto cell_data_res = load_cell_data();
-  if (cell_data_res.is_error()) {
-    return cell_data_res;
   }
-  auto cell_refs_res = load_cell_refs();
-  if (cell_refs_res.is_error()) {
-    return cell_refs_res;
+  CustomCellSerializationInfo& get_ser_info() {
+    return ser_info.value();
   }
-
-  return cell_info.custom_create_data_cell(cb, refs);
-}
+};
 
 td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int max_roots) {
   MSG(log_level::COMPRESSION_META, "Running custom deserialize impl");
-  // for (int i = 0; i < data.size(); ++i) {
-  //   std::cerr << uint16_t(uint8_t(data[i])) << ' ';
-  // }
-  // std::cerr << '\n';
   get_og().clear();
   BitReader breader(data, 0);
   long long start_offset = info.parse_serialized_header(breader);
@@ -1079,14 +1030,9 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     return start_offset;
   }
 
-  //LOG(INFO) << "estimated size " << size_est << ", true size " << data.size();
   if (info.root_count > max_roots) {
     return td::Status::Error("Bag-of-cells has more root cells than expected");
   }
-
-  auto read_ref = [&]() -> uint64_t {
-    return breader.read_bits(info.ref_bit_size);
-  };
 
   cell_count = info.cell_count;
   roots.clear();
@@ -1094,31 +1040,90 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   roots[0].idx = info.cell_count - 1;
   std::vector<Ref<DataCell>> cell_list;
   cell_list.reserve(cell_count);
+  std::vector<LoadCellData> cell_data(cell_count);
   for (int i = 0; i < cell_count; i++) {
-    CustomCellSerializationInfo cell_info;
-    auto d1 = huffman::d1.read(breader);
-    auto d2 = huffman::d2.read(breader);
-    add_char("d1", d1);
-    add_char("d2", d2);
-    DBG(log_level::CELL_META, d1, d2);
-    auto status = cell_info.custom_init(d1, d2, info.ref_bit_size);
-    if (status.is_error()) {
-      return td::Status::Error(PSLICE()
-                                << "invalid bag-of-cells failed to deserialize cell #" << i << " " << status.error());
-    }
     // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
     MSG(log_level::CELL_META, "Loading cell with idx ", idx);
-    auto r_cell = deserialize_cell(idx, cell_list, breader, cell_info);
-    if (r_cell.is_error()) {
-      return td::Status::Error(PSLICE() << "invalid bag-of-cells failed to deserialize cell #" << idx << " "
-                                        << r_cell.error());
+    auto& cell_info = cell_data[i];
+
+
+    for (auto mode : settings::save_data_order) {
+      switch (mode) {
+        case settings::CELL_DATA_ORDER::d1:
+          cell_info.d1 = huffman::d1.read(breader);
+          break;
+        case settings::CELL_DATA_ORDER::d2:
+          cell_info.d2 = huffman::d2.read(breader);
+          break;
+        case settings::CELL_DATA_ORDER::cell_type:
+          cell_info.cell_type = huffman::cell_type.read(breader);
+          break;
+        case settings::CELL_DATA_ORDER::flush_byte:
+          breader.flush_byte();
+          break;
+        case settings::CELL_DATA_ORDER::cell_data: {
+          // Loading d1 and d2 must happen before cell_data
+          auto status = cell_info.init_ser_info();
+          if (status.is_error()) {
+            return status;
+          }
+          int data_len = cell_info.ser_info.value().data_len;
+          for (int i = 1; i < data_len; ++i) {
+            uint8_t byte = breader.read_bits(8);
+            // uint8_t byte = huffman::cell_data.read(breader);
+            cell_info.data[i] = byte;
+          }
+          break; 
+        }
+        case settings::CELL_DATA_ORDER::cell_refs: {
+          // Loading d1 and d2 must happen before cell_refs
+          auto status = cell_info.init_ser_info();
+          if (status.is_error()) {
+            return status;
+          }
+          int refs_count = cell_info.get_ser_info().refs_cnt;
+          DBG(log_level::CELL_META, refs_count);
+          cell_info.ref_diffs.resize(refs_count);
+          for (auto &diff : cell_info.ref_diffs) {
+            diff = breader.read_bits(info.ref_bit_size);
+          }
+          break;
+        }
+        
+        default:
+          throw std::logic_error("Loading data not implemented");
+      }
     }
+    CellBuilder cb;
+
+    td::Slice cell_slice(cell_info.data.data(), cell_info.data.size());
+    TRY_RESULT(bits, cell_info.get_ser_info().custom_get_bits(cell_slice));
+    MSG(log_level::CELL_META, "Cell bits size = ", bits);
+    cb.store_bits(cell_slice.data(), bits);
+
+    std::array<td::Ref<Cell>, 4> refs_buf;
+    auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.get_ser_info().refs_cnt);
+    for (int k = 0; k < cell_info.get_ser_info().refs_cnt; k++) {
+      // int ref_diff = huffman::ref_diff.read(breader);
+      int ref_diff = cell_info.ref_diffs[k];
+      int ref_idx = idx + 1 + ref_diff;
+      if (ref_idx <= idx) {
+        return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
+                                          << " is to cell #" << ref_idx << " with smaller index");
+      }
+      if (ref_idx >= cell_count) {
+        return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
+                                          << " is to non-existent cell #" << ref_idx << ", only " << cell_count
+                                          << " cells are defined");
+      }
+      refs[k] = cell_list[cell_count - ref_idx - 1];
+    }
+    auto r_cell = cell_info.get_ser_info().custom_create_data_cell(cb, refs);
     cell_list.push_back(r_cell.move_as_ok());
     DCHECK(cell_list.back().not_null());
   }
   auto end_offset = breader.flush_and_get_ptr();
-  index_ptr = nullptr;
   root_count = info.root_count;
   for (auto& root_info : roots) {
     root_info.cell = cell_list[root_info.idx];
