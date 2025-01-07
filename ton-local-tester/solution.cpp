@@ -1042,11 +1042,9 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   cell_list.reserve(cell_count);
   std::vector<LoadCellData> cell_data(cell_count);
   for (int i = 0; i < cell_count; i++) {
-    // reconstruct cell with index cell_count - 1 - i
     int idx = cell_count - 1 - i;
-    MSG(log_level::CELL_META, "Loading cell with idx ", idx);
+    MSG(log_level::CELL_META, "Deserializing cell with idx ", idx);
     auto& cell_info = cell_data[i];
-
 
     for (auto mode : settings::save_data_order) {
       switch (mode) {
@@ -1095,6 +1093,13 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
           throw std::logic_error("Loading data not implemented");
       }
     }
+  }
+  for (int i = 0; i < cell_count; i++) {
+    // reconstruct cell with index cell_count - 1 - i
+    int idx = cell_count - 1 - i;
+    MSG(log_level::CELL_META, "Loading cell with idx ", idx);
+    auto& cell_info = cell_data[i];
+
     CellBuilder cb;
 
     td::Slice cell_slice(cell_info.data.data(), cell_info.data.size());
