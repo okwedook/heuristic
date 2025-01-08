@@ -820,7 +820,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
           store_ref(ref_diff);
         }
       };
-      auto store_prunned_branch = [&]() {
+      auto store_prunned_branch_data = [&]() {
         DCHECK(buf[3] == 1);
         int l = s - 4;
         DCHECK(l % 34 == 0);
@@ -844,21 +844,24 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       }
       for (auto mode : stored_data) {
         switch (mode) {
-          case settings::CELL_DATA_ORDER::d1:
+          case settings::CELL_DATA_ORDER::d1: {
             add_char("d1", d1);
             huffman::d1.write(bwriter, d1);
             break;
-          case settings::CELL_DATA_ORDER::d2:
+          }
+          case settings::CELL_DATA_ORDER::d2: {
             add_char("d2", d2);
             huffman::d2.write(bwriter, d2);
             break;
-          case settings::CELL_DATA_ORDER::special_cell_type:
+          }
+          case settings::CELL_DATA_ORDER::special_cell_type: {
             if (is_special) {
               add_char("special_cell_type", special_cell_type);
               huffman::special_cell_type.write(bwriter, special_cell_type);
             }
             break;
-          case settings::CELL_DATA_ORDER::ordinary_first_byte:
+          }
+          case settings::CELL_DATA_ORDER::ordinary_first_byte: {
             if (!is_special) {
               if (s > 2) {
                 add_char("ordinary_first_byte", ordinary_first_byte);
@@ -866,20 +869,24 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
               }
             }
             break;
-          case settings::CELL_DATA_ORDER::flush_byte:
+          }
+          case settings::CELL_DATA_ORDER::flush_byte: {
             MSG(log_level::BIT_IO, "Custom byte flush");
             bwriter.flush_byte();
             break;
-          case settings::CELL_DATA_ORDER::cell_data:
+          }
+          case settings::CELL_DATA_ORDER::cell_data: {
             if (is_special && special_cell_type == 1) {
-              store_prunned_branch();
+              store_prunned_branch_data();
             } else {
               store_cell_data();
             }
             break;
-          case settings::CELL_DATA_ORDER::cell_refs:
+          }
+          case settings::CELL_DATA_ORDER::cell_refs: {
             store_cell_refs();
             break;
+          }
           default:
             throw std::logic_error("Not implemented data saving");
             break;
@@ -1072,27 +1079,33 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
 
       for (auto mode : stored_data) {
         switch (mode) {
-          case settings::CELL_DATA_ORDER::d1:
+          case settings::CELL_DATA_ORDER::d1: {
             cell_info.d1 = huffman::d1.read(breader);
             break;
-          case settings::CELL_DATA_ORDER::d2:
+          }
+          case settings::CELL_DATA_ORDER::d2: {
             cell_info.d2 = huffman::d2.read(breader);
             break;
-          case settings::CELL_DATA_ORDER::special_cell_type:
+          }
+          case settings::CELL_DATA_ORDER::special_cell_type: {
             TRY_STATUS(cell_info.init());
             if (cell_info.special) {
               cell_info.special_cell_type = huffman::special_cell_type.read(breader);
             }
             break;
-          case settings::CELL_DATA_ORDER::ordinary_first_byte:
+          }
+          case settings::CELL_DATA_ORDER::ordinary_first_byte: {
             TRY_STATUS(cell_info.init());
             if (!cell_info.special && cell_info.data_len > 0) {
               cell_info.ordinary_first_byte = huffman::ordinary_first_byte.read(breader);
             }
             break;
-          case settings::CELL_DATA_ORDER::flush_byte:
+          }
+          case settings::CELL_DATA_ORDER::flush_byte: {
+            MSG(log_level::BIT_IO, "Custom flush byte");
             breader.flush_byte();
             break;
+          }
           case settings::CELL_DATA_ORDER::cell_data: {
             // Loading d1 and d2 must happen before cell_data
             TRY_STATUS(cell_info.init());
