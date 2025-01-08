@@ -148,16 +148,18 @@ namespace settings {
     d1,
     d2,
     special_cell_type,
-    cell_data,
     cell_refs,
     flush_byte,
     ordinary_first_byte,
     prunned_branch_depths,
+    ordinary_cell_data,
+    special_cell_data,
   };
   static const std::vector<std::vector<enum CELL_DATA_ORDER>> save_data_order = {
     {CELL_DATA_ORDER::d2,CELL_DATA_ORDER::d1,CELL_DATA_ORDER::special_cell_type,CELL_DATA_ORDER::ordinary_first_byte,CELL_DATA_ORDER::cell_refs,CELL_DATA_ORDER::flush_byte,},
     {CELL_DATA_ORDER::prunned_branch_depths},
-    {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::cell_data,CELL_DATA_ORDER::flush_byte},
+    {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::ordinary_cell_data,CELL_DATA_ORDER::flush_byte},
+    {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::special_cell_data,CELL_DATA_ORDER::flush_byte},
   };
 
 
@@ -819,15 +821,18 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       };
       auto store_cell_refs = [&]() {
         DCHECK(dc->size_refs() == dc_info.ref_num);
+        std::vector<int> ref_idx;
         for (unsigned j = 0; j < dc_info.ref_num; ++j) {
           int k = cell_count - 1 - dc_info.ref_idx[j];
           MSG(log_level::CELL_META, "Link from ", i, " to ", k);
           DCHECK(k > i && k < cell_count);
           int ref_diff = k - i - 1;
+          ref_idx.push_back(ref_diff);
           add_int("ref_diff", ref_diff);
           // huffman::ref_diff.write(bwriter, ref_diff);
           store_ref(ref_diff);
         }
+        DBG(log_level::LOG_LEVEL::SKIP, ref_idx);
       };
       auto store_prunned_branch_data = [&]() {
         DCHECK(buf[3] == 1);
@@ -864,6 +869,9 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       } else if (s > 2) {
         ordinary_first_byte = uint16_t(buf[2]);
       }
+      if (!is_special && s > 3) {
+        add_char("ordinary_second_byte", buf[3]);
+      }
       for (auto mode : stored_data) {
         switch (mode) {
           case settings::CELL_DATA_ORDER::d1: {
@@ -895,8 +903,15 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             bwriter.flush_byte();
             break;
           }
-          case settings::CELL_DATA_ORDER::cell_data: {
-            if (is_special && special_cell_type == 1) {
+          case settings::CELL_DATA_ORDER::ordinary_cell_data: {
+            if (!is_special) {
+              store_cell_data(3, s - 3);
+            }
+            break;
+          }
+          case settings::CELL_DATA_ORDER::special_cell_data: {
+            if (!is_special) continue;
+            if (special_cell_type == 1) {
               store_prunned_branch_data();
             } else {
               store_cell_data(3, s - 3);
@@ -1167,9 +1182,19 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
             breader.flush_byte();
             break;
           }
-          case settings::CELL_DATA_ORDER::cell_data: {
-            TRY_STATUS(cell_info.load_data(breader));
-            break; 
+          case settings::CELL_DATA_ORDER::ordinary_cell_data: {
+            TRY_STATUS(cell_info.init());
+            if (!cell_info.special) {
+              TRY_STATUS(cell_info.load_data(breader));
+            }
+            break;
+          }
+          case settings::CELL_DATA_ORDER::special_cell_data: {
+            TRY_STATUS(cell_info.init());
+            if (cell_info.special) {
+              TRY_STATUS(cell_info.load_data(breader));
+            }
+            break;
           }
           case settings::CELL_DATA_ORDER::cell_refs: {
             TRY_STATUS(cell_info.init());
