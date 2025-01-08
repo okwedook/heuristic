@@ -862,11 +862,9 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             break;
           }
           case settings::CELL_DATA_ORDER::ordinary_first_byte: {
-            if (!is_special) {
-              if (s > 2) {
-                add_char("ordinary_first_byte", ordinary_first_byte);
-                huffman::ordinary_first_byte.write(bwriter, ordinary_first_byte);
-              }
+            if (!is_special && s > 2) {
+              add_char("ordinary_first_byte", ordinary_first_byte);
+              huffman::ordinary_first_byte.write(bwriter, ordinary_first_byte);
             }
             break;
           }
@@ -968,12 +966,13 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
 
 struct LoadCellData {
   int d1 = -1, d2 = -1, special_cell_type = -1, ordinary_first_byte = -1;
+  int uncompressed_data_offset = -1, uncompressed_data_len = -1;
   std::vector<uint8_t> data;
   std::vector<int> ref_diffs;
   int refs_cnt = -1;
   bool special = false;
   Cell::LevelMask level_mask;
-  int data_len = -1;
+  int full_data_len = -1;
   bool data_with_bits = false;
   td::Result<Ref<DataCell>> custom_create_data_cell(CellBuilder &cb, td::Span<Ref<Cell>> refs) const {
     DCHECK(refs_cnt == (td::int64)refs.size());
@@ -993,40 +992,19 @@ struct LoadCellData {
 
   td::Result<int> custom_get_bits(td::Slice cell_data) const {
       if (data_with_bits) {
-        DCHECK(data_len != 0);
-        int last = cell_data[data_len - 1];
+        DCHECK(full_data_len != 0);
+        int last = cell_data[full_data_len - 1];
         if (!(last & 0x7f)) {
           return td::Status::Error("overlong encoding");
         }
-        return td::narrow_cast<int>((data_len - 1) * 8 + 7 - td::count_trailing_zeroes_non_zero32(last));
+        return td::narrow_cast<int>((full_data_len - 1) * 8 + 7 - td::count_trailing_zeroes_non_zero32(last));
       } else {
-        return td::narrow_cast<int>(data_len * 8);
+        return td::narrow_cast<int>(full_data_len * 8);
       }
-  }
-
-  td::Status init_data() {
-    if (data_len == -1) {
-      return td::Status::Error("Should call cell_info.init() before cell_info.init_data()");
-    }
-    data.resize(256); // Initializes data.data() even if data_len = 0
-    data.resize(data_len);
-    if (special) {
-      if (special_cell_type == -1) {
-        return td::Status::Error("Special cell type uninitialized");
-      }
-      DBG(log_level::CELL_META, special_cell_type);
-      DCHECK(data_len > 0);
-      data[0] = special_cell_type;
-    } else if (data_len > 0) {
-      if (ordinary_first_byte == -1) {
-        return td::Status::Error("Special cell type uninitialized");
-      }
-      data[0] = ordinary_first_byte;
-    }
-    return td::Status::OK();
   }
 
   td::Status init() {
+    if (refs_cnt != -1) return td::Status::OK();
     if (d1 == -1) return td::Status::Error("Cell d1 uninitialized");
     if (d2 == -1) return td::Status::Error("Cell d2 uninitialized");
     DBG(log_level::CELL_META, d1, d2);
@@ -1038,12 +1016,44 @@ struct LoadCellData {
       return td::Status::Error("Invalid first byte");
     }
 
-    data_len = (d2 >> 1) + (d2 & 1);
+    full_data_len = (d2 >> 1) + (d2 & 1);
     data_with_bits = (d2 & 1) != 0;
 
-    DBG(log_level::CELL_META, refs_cnt, d1 >> 5, special, data_len, data_with_bits);
+    DBG(log_level::CELL_META, refs_cnt, d1 >> 5, special, full_data_len, data_with_bits);
 
+    return td::Status::OK();
+  }
 
+  td::Status init_data() {
+    if (data.capacity() > 0) return td::Status::OK();
+    TRY_STATUS(init());
+    data.resize(256); // Initializes data.data() even if full_data_len = 0
+    data.resize(full_data_len);
+    if (special) {
+      if (special_cell_type == -1) {
+        return td::Status::Error("Special cell type uninitialized");
+      }
+      DBG(log_level::CELL_META, special_cell_type);
+      DCHECK(full_data_len > 0);
+      data[0] = special_cell_type;
+    } else if (full_data_len > 0) {
+      if (ordinary_first_byte == -1) {
+        return td::Status::Error("Ordinary first byte uninitialized");
+      }
+      data[0] = ordinary_first_byte;
+    }
+    uncompressed_data_offset = 1;
+    uncompressed_data_len = full_data_len - 1;
+    return td::Status::OK();
+  }
+
+  td::Status load_data(BitReader& breader) {
+    TRY_STATUS(init_data());
+    for (int i = uncompressed_data_offset; i < uncompressed_data_offset + uncompressed_data_len; ++i) {
+      uint8_t byte = breader.read_bits(8);
+      // uint8_t byte = huffman::cell_data.read(breader);
+      data[i] = byte;
+    }
     return td::Status::OK();
   }
 };
@@ -1096,7 +1106,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
           }
           case settings::CELL_DATA_ORDER::ordinary_first_byte: {
             TRY_STATUS(cell_info.init());
-            if (!cell_info.special && cell_info.data_len > 0) {
+            if (!cell_info.special && cell_info.full_data_len > 0) {
               cell_info.ordinary_first_byte = huffman::ordinary_first_byte.read(breader);
             }
             break;
@@ -1107,18 +1117,10 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
             break;
           }
           case settings::CELL_DATA_ORDER::cell_data: {
-            // Loading d1 and d2 must happen before cell_data
-            TRY_STATUS(cell_info.init());
-            TRY_STATUS(cell_info.init_data());
-            for (int i = 1; i < cell_info.data_len; ++i) {
-              uint8_t byte = breader.read_bits(8);
-              // uint8_t byte = huffman::cell_data.read(breader);
-              cell_info.data[i] = byte;
-            }
+            TRY_STATUS(cell_info.load_data(breader));
             break; 
           }
           case settings::CELL_DATA_ORDER::cell_refs: {
-            // Loading d1 and d2 must happen before cell_refs
             TRY_STATUS(cell_info.init());
             DBG(log_level::CELL_META, cell_info.refs_cnt);
             cell_info.ref_diffs.resize(cell_info.refs_cnt);
