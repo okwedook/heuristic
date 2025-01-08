@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <optional>
 #include <vector>
+#include <bitset>
 #include "td/utils/lz4.h"
 #include "td/utils/base64.h"
 #include "vm/boc.h"
@@ -111,7 +112,7 @@ namespace log_level {
     SKIP = 1000 // Logs, that are never written
   };
 
-  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ALWAYS;
+  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::CELL;
 
   static constexpr auto ENCODER_BUILD = LOG_LEVEL::BYTE;
   static constexpr auto BIT_IO = LOG_LEVEL::BIT;
@@ -306,7 +307,7 @@ template<class Writer>
 struct BitWriter {
   BitWriter(Writer& _w) : w(_w), bit_value(0), bits(0) {}
   void write_bits(uint64_t value, int bit_size) {
-    MSG(log_level::BIT_IO, "Writing bits ", value, ' ', bit_size);
+    MSG(log_level::BIT_IO, "Writing bits ", bit_size, '[', value, ']');
     for (int i = 0; i < bit_size; ++i) {
       write_bit(value >> i & 1);
     }
@@ -320,7 +321,7 @@ struct BitWriter {
   }
   void flush_byte() {
     if (bits != 0) {
-      MSG(log_level::BIT_IO, "Writing bits ", uint16_t(bit_value), ' ', bits);
+      MSG(log_level::BIT_IO, "Flushing bits ", bits, '[', uint16_t(bit_value), ']');
       w.store_uint(bit_value, 1); // stores exactly byte
       bits = 0;
       bit_value = 0;
@@ -352,7 +353,7 @@ struct BitReader {
     for (int i = 0; i < bits; ++i) {
       ans |= static_cast<uint64_t>(read_bit()) << i;
     }
-    MSG(log_level::BIT_IO, "Read bits ", ans, ' ', bits);
+    MSG(log_level::BIT_IO, "Read bits ", bits, '[', ans, ']');
     return ans;
   }
   int flush_and_get_ptr() {
@@ -419,7 +420,9 @@ struct HuffmanEncoder {
   template<class Writer>
   void write(BitWriter<Writer>& bwriter, int value) const {
     auto [code, len] = code_len.at(value);
-    MSG(log_level::NUMBER, "Huffman write ", code, ' ', len, ' ', value);
+    auto code_str = std::bitset<64>(code).to_string();
+    reverse(code_str.begin(), code_str.end());
+    MSG(log_level::NUMBER, "Huffman write ", "0b", code_str.substr(0, len), ' ', value);
     bwriter.write_bits(code, len);
   }
   int read(BitReader& breader) const {
@@ -447,7 +450,7 @@ protected:
     std::vector<std::pair<long long, std::vector<int>>> by_cnt;
     for (auto [cnt, value] : data) {
       by_cnt.push_back({cnt, {value}});
-    }
+    };
     // TODO: improve performance for bigger data
     while (by_cnt.size() > 1) {
       std::sort(by_cnt.begin(), by_cnt.end(), [](auto lhs, auto rhs) {
@@ -530,75 +533,17 @@ static const HuffmanEncoder d1(huffman_data.at("d1"), "d1");
 static const HuffmanEncoder d2(huffman_data.at("d2"), "d2");
 static const HuffmanEncoder cell_data(huffman_data.at("cell_data"), "cell_data");
 static const HuffmanEncoder cell_type(huffman_data.at("cell_type"), "cell_type");
-HuffmanEncoderWithDefault ref_diff;
+HuffmanEncoder ref_diff;
 
 void init_ref_diff(int cell_count) {
-  int l = 0;
-  int r = std::max(cell_count, 1);
-  ref_diff = HuffmanEncoderWithDefault(huffman_data.at("ref_diff"), -1, {l, r}, "ref_diff");
+  // int l = 0;
+  // int r = std::max(cell_count, 1);
+  // ref_diff = HuffmanEncoderWithDefault(huffman_data.at("ref_diff"), -1, {l, r}, "ref_diff");
 }
 
 } // namespace huffman
 
 namespace vm {
-
-
-struct CustomCellSerializationInfo : public CellSerializationInfo {
-  td::Result<int> custom_get_bits(td::Slice cell_data) const {
-      if (data_with_bits) {
-        // for (int i = 0; i <= data_offset + data_len - 1; ++i) {
-        //   std::cerr << uint16_t(uint8_t(cell[i])) << ' ';
-        // }
-        // std::cerr << '\n';
-        // std::cerr << "Data offsets " << data_offset << ' ' << data_len << '\n';
-        DCHECK(data_len != 0);
-        int last = cell_data[data_len - 1];
-        if (!(last & 0x7f)) {
-          return td::Status::Error("overlong encoding");
-        }
-        return td::narrow_cast<int>((data_len - 1) * 8 + 7 - td::count_trailing_zeroes_non_zero32(last));
-      } else {
-        return td::narrow_cast<int>(data_len * 8);
-      }
-  }
-
-  td::Status custom_init(td::uint8 d1, td::uint8 d2) {
-    refs_cnt = d1 & 7;
-    level_mask = Cell::LevelMask(d1 >> 5);
-    special = (d1 & 8) != 0;
-    with_hashes = (d1 & 16) != 0;
-
-    if (refs_cnt > 4) {
-      if (refs_cnt != 7 || !with_hashes) {
-        return td::Status::Error("Invalid first byte");
-      }
-      refs_cnt = 0;
-      // ...
-      // do not deserialize absent cells!
-      return td::Status::Error("TODO: absent cells");
-    }
-
-    data_len = (d2 >> 1) + (d2 & 1);
-    data_with_bits = (d2 & 1) != 0;
-
-    return td::Status::OK();
-  }
-  td::Result<Ref<DataCell>> custom_create_data_cell(CellBuilder &cb, td::Span<Ref<Cell>> refs) const {
-    DCHECK(refs_cnt == (td::int64)refs.size());
-    for (int k = 0; k < refs_cnt; k++) {
-      cb.store_ref(std::move(refs[k]));
-    }
-    TRY_RESULT(res, cb.finalize_novm_nothrow(special));
-    CHECK(!res.is_null());
-    if (res->is_special() != special) {
-      return td::Status::Error("is_special mismatch");
-    }
-    if (res->get_level_mask() != level_mask) {
-      return td::Status::Error("level mask mismatch");
-    }
-    return res;
-  }
-};
 
 class CustomBagOfCells {
  public:
@@ -739,7 +684,6 @@ class CustomBagOfCells {
   unsigned long long get_idx_entry(int index);
   bool get_cache_entry(int index);
   td::Result<td::Slice> get_cell_slice(int index, td::Slice data);
-  td::Result<td::Ref<vm::DataCell>> deserialize_cell(int idx, td::Span<td::Ref<DataCell>> cells, BitReader& breader, CustomCellSerializationInfo& cell_info);
 };
 
 // unsigned long long CustomBagOfCells::Info::read_int(const unsigned char* ptr, unsigned bytes) {
@@ -901,6 +845,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             huffman::cell_type.write(bwriter, cell_type);
             break;
           case settings::CELL_DATA_ORDER::flush_byte:
+            MSG(log_level::BIT_IO, "Custom byte flush");
             bwriter.flush_byte();
             break;
           case settings::CELL_DATA_ORDER::cell_data:
@@ -996,24 +941,72 @@ struct LoadCellData {
   int d1 = -1, d2 = -1, cell_type = -1;
   std::vector<uint8_t> data;
   std::vector<int> ref_diffs;
-  std::optional<CustomCellSerializationInfo> ser_info;
-  td::Status init_ser_info() {
-    if (ser_info.has_value()) return td::Status::OK();
+  int refs_cnt = -1;
+  bool special = false;
+  Cell::LevelMask level_mask;
+  int data_len = -1;
+  bool data_with_bits = false;
+  td::Status init() {
+    if (d1 == -1) return td::Status::Error("Cell d1 uninitialized");
+    if (d2 == -1) return td::Status::Error("Cell d2 uninitialized");
     DBG(log_level::CELL_META, d1, d2);
-    ser_info = CustomCellSerializationInfo();
-    auto status = ser_info.value().custom_init(d1, d2);
-    if (status.is_error()) {
-      return status;
+    return custom_init(d1, d2);
+  }
+  td::Result<Ref<DataCell>> custom_create_data_cell(CellBuilder &cb, td::Span<Ref<Cell>> refs) const {
+    DCHECK(refs_cnt == (td::int64)refs.size());
+    for (int k = 0; k < refs_cnt; k++) {
+      cb.store_ref(std::move(refs[k]));
     }
+    TRY_RESULT(res, cb.finalize_novm_nothrow(special));
+    CHECK(!res.is_null());
+    if (res->is_special() != special) {
+      return td::Status::Error("is_special mismatch");
+    }
+    if (res->get_level_mask() != level_mask) {
+      return td::Status::Error("level mask mismatch");
+    }
+    return res;
+  }
+
+  td::Result<int> custom_get_bits(td::Slice cell_data) const {
+      if (data_with_bits) {
+        // for (int i = 0; i <= data_offset + data_len - 1; ++i) {
+        //   std::cerr << uint16_t(uint8_t(cell[i])) << ' ';
+        // }
+        // std::cerr << '\n';
+        // std::cerr << "Data offsets " << data_offset << ' ' << data_len << '\n';
+        DCHECK(data_len != 0);
+        int last = cell_data[data_len - 1];
+        if (!(last & 0x7f)) {
+          return td::Status::Error("overlong encoding");
+        }
+        return td::narrow_cast<int>((data_len - 1) * 8 + 7 - td::count_trailing_zeroes_non_zero32(last));
+      } else {
+        return td::narrow_cast<int>(data_len * 8);
+      }
+  }
+
+  td::Status custom_init(td::uint8 d1, td::uint8 d2) {
+    refs_cnt = d1 & 7;
+    level_mask = Cell::LevelMask(d1 >> 5);
+    special = (d1 & 8) != 0;
+
+    if (refs_cnt > 4) {
+      return td::Status::Error("Invalid first byte");
+    }
+
+    data_len = (d2 >> 1) + (d2 & 1);
+    data_with_bits = (d2 & 1) != 0;
+
+    DBG(log_level::CELL_META, refs_cnt, d1 >> 5, special, data_len, data_with_bits);
+
     data.resize(256);
-    data.resize(ser_info.value().data_len);
-    if (data.size() > 0) {
+    data.resize(data_len);
+    if (data_len > 0) {
       data[0] = cell_type;
     }
+
     return td::Status::OK();
-  }
-  CustomCellSerializationInfo& get_ser_info() {
-    return ser_info.value();
   }
 };
 
@@ -1062,12 +1055,11 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
             break;
           case settings::CELL_DATA_ORDER::cell_data: {
             // Loading d1 and d2 must happen before cell_data
-            auto status = cell_info.init_ser_info();
+            auto status = cell_info.init();
             if (status.is_error()) {
               return status;
             }
-            int data_len = cell_info.ser_info.value().data_len;
-            for (int i = 1; i < data_len; ++i) {
+            for (int i = 1; i < cell_info.data_len; ++i) {
               uint8_t byte = breader.read_bits(8);
               // uint8_t byte = huffman::cell_data.read(breader);
               cell_info.data[i] = byte;
@@ -1076,13 +1068,12 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
           }
           case settings::CELL_DATA_ORDER::cell_refs: {
             // Loading d1 and d2 must happen before cell_refs
-            auto status = cell_info.init_ser_info();
+            auto status = cell_info.init();
             if (status.is_error()) {
               return status;
             }
-            int refs_count = cell_info.get_ser_info().refs_cnt;
-            DBG(log_level::CELL_META, refs_count);
-            cell_info.ref_diffs.resize(refs_count);
+            DBG(log_level::CELL_META, cell_info.refs_cnt);
+            cell_info.ref_diffs.resize(cell_info.refs_cnt);
             for (auto &diff : cell_info.ref_diffs) {
               diff = breader.read_bits(info.ref_bit_size);
             }
@@ -1104,13 +1095,13 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     CellBuilder cb;
 
     td::Slice cell_slice(cell_info.data.data(), cell_info.data.size());
-    TRY_RESULT(bits, cell_info.get_ser_info().custom_get_bits(cell_slice));
+    TRY_RESULT(bits, cell_info.custom_get_bits(cell_slice));
     MSG(log_level::CELL_META, "Cell bits size = ", bits);
     cb.store_bits(cell_slice.data(), bits);
 
     std::array<td::Ref<Cell>, 4> refs_buf;
-    auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.get_ser_info().refs_cnt);
-    for (int k = 0; k < cell_info.get_ser_info().refs_cnt; k++) {
+    auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
+    for (int k = 0; k < cell_info.refs_cnt; k++) {
       // int ref_diff = huffman::ref_diff.read(breader);
       int ref_diff = cell_info.ref_diffs[k];
       int ref_idx = idx + 1 + ref_diff;
@@ -1125,7 +1116,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
       }
       refs[k] = cell_list[cell_count - ref_idx - 1];
     }
-    auto r_cell = cell_info.get_ser_info().custom_create_data_cell(cb, refs);
+    auto r_cell = cell_info.custom_create_data_cell(cb, refs);
     cell_list.push_back(r_cell.move_as_ok());
     DCHECK(cell_list.back().not_null());
   }
