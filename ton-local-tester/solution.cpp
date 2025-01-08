@@ -159,6 +159,15 @@ namespace settings {
     {CELL_DATA_ORDER::prunned_branch_depths},
     {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::cell_data,CELL_DATA_ORDER::flush_byte},
   };
+
+
+  enum class FinalCompression {
+    ORIGINAL,
+    LZ4,
+    DEFLATE
+  };
+
+  static constexpr enum FinalCompression final_compression = FinalCompression::DEFLATE;
 };
 
 namespace BWT {
@@ -1266,21 +1275,13 @@ td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty =
 
 } // namespace vm
 
-enum class FinalCompression {
-  ORIGINAL,
-  LZ4,
-  DEFLATE
-};
-
-static constexpr enum FinalCompression final_compression = FinalCompression::DEFLATE;
-
 td::BufferSlice apply_final_compression(td::Slice data) {
-  switch (final_compression) {
-    case FinalCompression::ORIGINAL:
+  switch (settings::final_compression) {
+    case settings::FinalCompression::ORIGINAL:
       return td::BufferSlice(data);
-    case FinalCompression::LZ4:
+    case settings::FinalCompression::LZ4:
       return td::lz4_compress(data);
-    case FinalCompression::DEFLATE:
+    case settings::FinalCompression::DEFLATE:
       return td::gzencode(data, 2);
     default:
       throw std::invalid_argument("Unknown compression type");
@@ -1288,12 +1289,12 @@ td::BufferSlice apply_final_compression(td::Slice data) {
 }
 
 td::BufferSlice invert_final_compression(td::Slice data) {
-  switch (final_compression) {
-    case FinalCompression::ORIGINAL:
+  switch (settings::final_compression) {
+    case settings::FinalCompression::ORIGINAL:
       return td::BufferSlice(data);
-    case FinalCompression::LZ4:
+    case settings::FinalCompression::LZ4:
       return td::lz4_decompress(data, 2 << 20).move_as_ok();
-    case FinalCompression::DEFLATE:
+    case settings::FinalCompression::DEFLATE:
       return td::gzdecode(data);
     default:
       throw std::invalid_argument("Unknown compression type");
