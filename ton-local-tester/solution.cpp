@@ -12,6 +12,7 @@
 #include <optional>
 #include <vector>
 #include <bitset>
+#include <queue>
 #include "td/utils/lz4.h"
 #include "td/utils/base64.h"
 #include "vm/boc.h"
@@ -453,25 +454,25 @@ struct HuffmanEncoder {
 protected:
   void set_data(const distribution_data& data) {
     DCHECK(data.size() > 1);
-    std::vector<std::pair<long long, std::vector<int>>> by_cnt;
-    for (auto [cnt, value] : data) {
-      by_cnt.push_back({cnt, {value}});
+    using vertex = std::pair<long long, std::vector<int>>;
+    auto cmp = [&](const vertex& lhs, const vertex& rhs) {
+      if (lhs.first != rhs.first) return lhs.first > rhs.first;
+      return lhs.second.size() > rhs.second.size();
     };
-    // TODO: improve performance for bigger data
-    while (by_cnt.size() > 1) {
-      std::sort(by_cnt.begin(), by_cnt.end(), [](auto lhs, auto rhs) {
-        if (lhs.first != rhs.first) return lhs.first > rhs.first;
-        return lhs.second.size() > rhs.second.size();
-      });
-      auto [c1, v1] = by_cnt.back();
-      by_cnt.pop_back();
-      auto [c2, v2] = by_cnt.back();
-      by_cnt.pop_back();
+    std::priority_queue<vertex, std::vector<vertex>, decltype(cmp)> sorted_vertex(cmp);
+    for (auto [cnt, value] : data) {
+      sorted_vertex.push({cnt, {value}});
+    };
+    while (sorted_vertex.size() > 1) {
+      auto [c1, v1] = sorted_vertex.top();
+      sorted_vertex.pop();
+      auto [c2, v2] = sorted_vertex.top();
+      sorted_vertex.pop();
       for (auto x : v1) add_bit(x, 0);
       for (auto x : v2) add_bit(x, 1);
       v1.insert(v1.end(), v2.begin(), v2.end());
       c1 += c2;
-      by_cnt.push_back({c1, v1});
+      sorted_vertex.push({c1, v1});
     }
   }
 private:
