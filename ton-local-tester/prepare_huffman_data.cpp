@@ -158,6 +158,76 @@ template<class ...T> void println(const T&... u) { print(u..., '\n'); }
     #define msg(...) 0
 #endif
 
+
+using distribution_data = std::vector<std::pair<long long, int>>;
+
+struct HuffmanEncoder {
+  HuffmanEncoder() {}
+  HuffmanEncoder(const distribution_data& data, const std::string name) {
+    set_data(data);
+    #ifndef ONLINE_JUDGE
+      eval_data(data, name);
+    #endif
+    build_index();
+  }
+  void eval_data(const distribution_data& data, const std::string name) {
+    long long uncompressed = 0, compressed = 0;
+    for (auto [count, value] : data) {
+      auto [_, len] = code_len.at(value);
+      uncompressed += 8 * count;
+      compressed += len * count;
+    }
+    auto compression_ratio = uncompressed * 1.0 / compressed;
+    std::cerr << "Huffman encoder data for " << name << ": " << dbgout(uncompressed, compressed, compression_ratio) << '\n';
+  }
+  int get_len(int value) const {
+    return code_len.at(value).second;
+  }
+  bool have_value(int value) const {
+    return code_len.count(value);
+  }
+protected:
+  void set_data(const distribution_data& data) {
+    assert(data.size() > 1);
+    using vertex = std::pair<long long, std::vector<int>>;
+    auto cmp = [&](const vertex& lhs, const vertex& rhs) {
+      if (lhs.first != rhs.first) return lhs.first > rhs.first;
+      return lhs.second.size() > rhs.second.size();
+    };
+    std::priority_queue<vertex, std::vector<vertex>, decltype(cmp)> sorted_vertex(cmp);
+    for (auto [cnt, value] : data) {
+      sorted_vertex.push({cnt, {value}});
+    };
+    while (sorted_vertex.size() > 1) {
+      auto [c1, v1] = sorted_vertex.top();
+      sorted_vertex.pop();
+      auto [c2, v2] = sorted_vertex.top();
+      sorted_vertex.pop();
+      for (auto x : v1) add_bit(x, 0);
+      for (auto x : v2) add_bit(x, 1);
+      v1.insert(v1.end(), v2.begin(), v2.end());
+      c1 += c2;
+      sorted_vertex.push({c1, v1});
+    }
+  }
+private:
+  std::map<int, std::pair<uint64_t, int>> code_len;
+  std::map<std::pair<uint64_t, int>, int> code_index;
+  void build_index() {
+    for (auto [value, c_l] : code_len) {
+      auto [code, len] = c_l;
+      code_index[{code, len}] = value;
+    }
+  }
+  void add_bit(int value, int bit) {
+    auto& [code, len] = code_len[value];
+    code = (code << 1) | bit;
+    ++len;
+    assert(len <= 64);
+  }
+};
+
+
 signed main() {
     std::ignore = freopen("res/raw_huffman_data.txt", "r", stdin);
     std::ignore = freopen("res/prepared_huffman_data.txt", "w", stdout);
@@ -174,8 +244,10 @@ signed main() {
       for (auto [value, cnt] : data) {
         st_data.push_back({cnt, value});
       }
+      HuffmanEncoder full_encoder(st_data, "full_" + name);
       rsort(st_data);
       if (sz(st_data) > 256) st_data.resize(256);
+      HuffmanEncoder cut_encoder(st_data, "cut_" + name);
       auto x = make_pair(name, st_data);
       cout << pdbg(x) << ",\n";
     }

@@ -160,10 +160,10 @@ namespace settings {
   };
   static const std::vector<std::vector<enum CELL_DATA_ORDER>> save_data_order = {
     {CELL_DATA_ORDER::d1,CELL_DATA_ORDER::d2,CELL_DATA_ORDER::special_cell_type,CELL_DATA_ORDER::ordinary_first_byte,CELL_DATA_ORDER::flush_byte,},
-    {CELL_DATA_ORDER::cell_refs,},
-    {CELL_DATA_ORDER::prunned_branch_depths,},
     {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::ordinary_cell_data,CELL_DATA_ORDER::flush_byte},
     {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::special_cell_data,CELL_DATA_ORDER::flush_byte},
+    {CELL_DATA_ORDER::prunned_branch_depths,},
+    {CELL_DATA_ORDER::cell_refs,},
   };
 
   enum class FinalCompression {
@@ -613,20 +613,6 @@ class CustomBagOfCells {
       valid = false;
     }
     long long parse_serialized_header(BitReader& breader);
-    // unsigned long long read_int(const unsigned char* ptr, unsigned bytes);
-    // unsigned long long read_ref(const unsigned char* ptr) {
-    //   return read_int(ptr, ref_bit_size);
-    // }
-    // unsigned long long read_offset(const unsigned char* ptr) {
-    //   return read_int(ptr, offset_bit_size);
-    // }
-    // void write_int(unsigned char* ptr, unsigned long long value, int bytes);
-    // void write_ref(unsigned char* ptr, unsigned long long value) {
-    //   write_int(ptr, value, ref_bit_size);
-    // }
-    // void write_offset(unsigned char* ptr, unsigned long long value) {
-    //   write_int(ptr, value, offset_bit_size);
-    // }
   };
 
   int cell_count{0}, root_count{0}, dangle_count{0}, int_refs{0};
@@ -712,7 +698,7 @@ class CustomBagOfCells {
     cells.clear();
     cell_list_.clear();
   }
-  td::uint64 compute_sizes(int& r_size);
+  td::uint64 compute_sizes();
   void reorder_cells();
   int revisit(int cell_idx, int force = 0);
   unsigned long long get_idx_entry_raw(int index);
@@ -721,47 +707,11 @@ class CustomBagOfCells {
   td::Result<td::Slice> get_cell_slice(int index, td::Slice data);
 };
 
-// unsigned long long CustomBagOfCells::Info::read_int(const unsigned char* ptr, unsigned bytes) {
-//   unsigned long long res = 0;
-//   while (bytes > 0) {
-//     res = (res << 8) + *ptr++;
-//     --bytes;
-//   }
-//   return res;
-// }
-// void CustomBagOfCells::Info::write_int(unsigned char* ptr, unsigned long long value, int bytes) {
-//   ptr += bytes;
-//   while (bytes) {
-//     *--ptr = value & 0xff;
-//     value >>= 8;
-//     --bytes;
-//   }
-//   DCHECK(!bytes);
-// }
-
 long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
   invalidate();
-  ref_bit_size = 0;
   root_count = cell_count = -1;
   index_offset = data_offset = total_size = 0;
-  // if (sz < 1) {
-  //   return -10;
-  // }
-  // ref_bit_size = 2;
-  ref_bit_size = breader.read_bits(5);
-  if (ref_bit_size > 4 * 8 || ref_bit_size < 1) {
-    return 0;
-  }
-  // if (sz < 6) {
-  //   return -7 - 3 * ref_bit_size;
-  // }
-  // offset_bit_size = ptr[1];
-
-  DBG(log_level::COMPRESSION_META, ref_bit_size);
-  auto read_ref = [&]() -> uint64_t {
-    return breader.read_bits(ref_bit_size);
-  };
-  cell_count = (int)read_ref();
+  cell_count = breader.read_bits(16);
   if (cell_count <= 0) {
     cell_count = -1;
     return 0;
@@ -795,16 +745,10 @@ template <typename WriterT>
 td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   BitWriter bwriter(writer);
   MSG(log_level::COMPRESSION_META, "Running custom serialize impl");
-  auto store_ref = [&](unsigned long long value) { bwriter.write_bits(value, info.ref_bit_size); };
 
   td::uint8 byte{0};
   // 3, 4 - flags
-  if (info.ref_bit_size < 1 || info.ref_bit_size > 4 * 8) {
-    return 0;
-  }
-  bwriter.write_bits(info.ref_bit_size, 5);
-
-  store_ref(cell_count);
+  bwriter.write_bits(cell_count, 16);
   huffman::init_ref_diff(cell_count);
   DCHECK((unsigned)cell_count == cell_list_.size());
 
@@ -830,12 +774,34 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       int s = serialized_cells[i].size();
       auto* buf = serialized_cells[i].data();
       MSG(log_level::CELL_META, "Cell d1, d2 = ", uint16_t(buf[0]), ' ', uint16_t(buf[1]));
+      int d1 = uint16_t(buf[0]);
+      bool is_special = d1 & 8;
+      int d2 = uint16_t(buf[1]);
+      int special_cell_type = -1;
+      int ordinary_first_byte = -1;
+      if (is_special) {
+        special_cell_type = uint16_t(buf[2]);
+      } else if (s > 2) {
+        ordinary_first_byte = uint16_t(buf[2]);
+      }
+      if (!is_special && s > 3) {
+        add_int("two_bytes", (uint16_t(buf[2]) << 8) + uint16_t(buf[3]));
+      }
       auto store_cell_data = [&](int from, int len) {
+        if (!is_special) {
+          std::cerr << "Ordinary cell: ";
+        }
         for (int i = from; i < from + len; ++i) {
           MSG(log_level::LOG_LEVEL::BYTE, "Saving byte ", uint16_t(buf[i]));
-          add_char("cell_data", buf[i]);
+          if (!is_special) {
+            std::cerr << uint16_t(buf[i]) << ' ';
+            add_char("cell_data", buf[i]);
+          }
           bwriter.write_bits(buf[i], 8);
           // huffman::cell_data.write(bwriter, buf[i]);
+        }
+        if (!is_special) {
+          std::cerr << '\n';
         }
       };
       auto store_cell_refs = [&]() {
@@ -879,19 +845,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
           huffman::prunned_depth.write(bwriter, val);
         }
       };
-      int d1 = uint16_t(buf[0]);
-      bool is_special = d1 & 8;
-      int d2 = uint16_t(buf[1]);
-      int special_cell_type = -1;
-      int ordinary_first_byte = -1;
-      if (is_special) {
-        special_cell_type = uint16_t(buf[2]);
-      } else if (s > 2) {
-        ordinary_first_byte = uint16_t(buf[2]);
-      }
-      if (!is_special && s > 3) {
-        add_char("ordinary_second_byte", buf[3]);
-      }
       for (auto mode : stored_data) {
         switch (mode) {
           case settings::CELL_DATA_ORDER::d1: {
@@ -964,27 +917,14 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 }
 
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
-td::uint64 CustomBagOfCells::compute_sizes(int& r_size) {
-  int rs = 0;
-  if (!root_count || !data_bytes) {
-    r_size = 0;
-    return 0;
-  }
-  while (cell_count >= (1LL << rs)) {
-    rs++;
-  }
-  td::uint64 data_bytes_adj = cell_count * 3 + data_bytes + (unsigned long long)int_refs * ((rs + 7) / 8);
-  if (rs > 4 * 8) {
-    r_size = 0;
-    return 0;
-  }
-  r_size = rs;
+td::uint64 CustomBagOfCells::compute_sizes() {
+  td::uint64 data_bytes_adj = cell_count * 3 + data_bytes + (unsigned long long)int_refs * 4;
   return data_bytes_adj;
 }
 
 // Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 std::size_t CustomBagOfCells::estimate_serialized_size() {
-  auto data_bytes_adj = compute_sizes(info.ref_bit_size);
+  auto data_bytes_adj = compute_sizes();
   if (!data_bytes_adj) {
     info.invalidate();
     return 0;
@@ -1425,9 +1365,15 @@ int main() {
       std::sort(st_data.begin(), st_data.end(), [&](auto a, auto b) {
         return a.second > b.second;
       });
+      long long total = 0;
+      huffman::distribution_data distr; 
       for (auto [value, count] : st_data) {
         std::cout << name << ' ' << value << ' ' << count << '\n';
+        total += count;
+        distr.push_back({count, value});
       }
+      MSG(log_level::ENCODER_STAT, "Different count for ", name, " = ", data.size(), " Total count = ", total, " ", data.size() * 1.0 / total);
+      huffman::HuffmanEncoder encoder(distr, name);
     }
   #endif
 }
