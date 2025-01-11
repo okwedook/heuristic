@@ -14,6 +14,7 @@
 #include <bitset>
 #include <queue>
 #include <cmath>
+#include <numeric>
 #include "td/utils/lz4.h"
 #include "td/utils/base64.h"
 #include "vm/boc.h"
@@ -158,10 +159,12 @@ namespace settings {
     prunned_branch_depths,
     ordinary_cell_data,
     prunned_branch_data,
-    other_special_cells_data
+    other_special_cells_data,
+    sort_cells_by_meta,
   };
   static const std::vector<std::vector<enum CELL_DATA_ORDER>> save_data_order = {
     {CELL_DATA_ORDER::d1,CELL_DATA_ORDER::d2,CELL_DATA_ORDER::special_cell_type,CELL_DATA_ORDER::ordinary_first_byte,CELL_DATA_ORDER::flush_byte,},
+    {CELL_DATA_ORDER::sort_cells_by_meta,},
     {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::ordinary_cell_data,CELL_DATA_ORDER::flush_byte},
     {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::prunned_branch_data,CELL_DATA_ORDER::flush_byte},
     {CELL_DATA_ORDER::flush_byte, CELL_DATA_ORDER::other_special_cells_data, CELL_DATA_ORDER::flush_byte},
@@ -918,6 +921,14 @@ struct LoadCellData {
     }
     return td::Status::OK();
   }
+
+  // return -1 if a < b, 1 if a > b and 0 if a == b
+  int compare_meta(const LoadCellData& other) const {
+    if (d1 != other.d1) {
+      return d1 < other.d1 ? -1 : 1;
+    }
+    return 0;
+  }
 };
 
 long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
@@ -992,8 +1003,12 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     }
   }
 
+  std::vector<int> cell_order(cell_count);
+  std::iota(cell_order.begin(), cell_order.end(), 0);
+  std::reverse(cell_order.begin(), cell_order.end());
+
   for (auto stored_data : settings::save_data_order) {
-    for (int i = cell_count - 1; i >= 0; --i) {
+    for (auto i : cell_order) {
       int idx = cell_count - 1 - i;
       MSG(log_level::CELL_META, "Saving cell with idx ", i, " with refnum ", int(cell_list_[idx].ref_num));
       auto start_position = bwriter.position();
@@ -1012,6 +1027,14 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       };
       for (auto mode : stored_data) {
         switch (mode) {
+          case settings::CELL_DATA_ORDER::sort_cells_by_meta: {
+            std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
+              auto check = cell_info[a].compare_meta(cell_info[b]);
+              if (check != 0) return check == -1;
+              return a > b;
+            });
+            goto next_save_data_order;
+          }
           case settings::CELL_DATA_ORDER::d1: {
             auto d1 = cell_info[i].d1;
             DBG(log_level::CELL_META, d1);
@@ -1080,6 +1103,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       auto end_position = bwriter.position();
       MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
     }
+    next_save_data_order:;
   }
   bwriter.flush_byte(); // It's important to write the last byte, otherwise it will stay in the buffer
   writer.chk();
@@ -1157,14 +1181,26 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   std::vector<Ref<DataCell>> cell_list;
   cell_list.reserve(cell_count);
   std::vector<LoadCellData> cell_data(cell_count);
+
+  std::vector<int> cell_order(cell_count);
+  std::iota(cell_order.begin(), cell_order.end(), 0);
+
   for (auto stored_data : settings::save_data_order) {
-    for (int i = 0; i < cell_count; i++) {
+    for (auto i : cell_order) {
       int idx = cell_count - 1 - i;
       MSG(log_level::CELL_META, "Deserializing cell with idx ", idx);
       auto& cell_info = cell_data[i];
 
       for (auto mode : stored_data) {
         switch (mode) {
+          case settings::CELL_DATA_ORDER::sort_cells_by_meta: {
+            std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
+              auto check = cell_data[a].compare_meta(cell_data[b]);
+              if (check != 0) return check == -1;
+              return a < b;
+            });
+            goto next_load_data_order;
+          }
           case settings::CELL_DATA_ORDER::d1: {
             cell_info.d1 = huffman::d1.read(breader);
             break;
@@ -1230,6 +1266,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
         }
       }
     }
+    next_load_data_order:;
   }
   for (int i = 0; i < cell_count; i++) {
     // reconstruct cell with index cell_count - 1 - i
