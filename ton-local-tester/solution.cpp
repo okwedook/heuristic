@@ -147,6 +147,7 @@ namespace log_level {
 
 namespace settings {
   bool use_bwt = false;
+  constexpr int PRUNNED_BRANCH_TYPE = 1;
   enum class CELL_DATA_ORDER {
     d1,
     d2,
@@ -156,12 +157,14 @@ namespace settings {
     ordinary_first_byte,
     prunned_branch_depths,
     ordinary_cell_data,
-    special_cell_data,
+    prunned_branch_data,
+    other_special_cells_data
   };
   static const std::vector<std::vector<enum CELL_DATA_ORDER>> save_data_order = {
     {CELL_DATA_ORDER::d1,CELL_DATA_ORDER::d2,CELL_DATA_ORDER::special_cell_type,CELL_DATA_ORDER::ordinary_first_byte,CELL_DATA_ORDER::flush_byte,},
     {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::ordinary_cell_data,CELL_DATA_ORDER::flush_byte},
-    {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::special_cell_data,CELL_DATA_ORDER::flush_byte},
+    {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::prunned_branch_data,CELL_DATA_ORDER::flush_byte},
+    {CELL_DATA_ORDER::flush_byte, CELL_DATA_ORDER::other_special_cells_data, CELL_DATA_ORDER::flush_byte},
     {CELL_DATA_ORDER::prunned_branch_depths,},
     {CELL_DATA_ORDER::cell_refs,},
   };
@@ -802,7 +805,7 @@ struct LoadCellData {
       if (special_cell_type == -1) {
         return td::Status::Error("Can't initialize data when special cell type is not set");
       }
-      if (special_cell_type == 1) {
+      if (special_cell_type == settings::PRUNNED_BRANCH_TYPE) {
         // TODO: Check that data[1] = 1 on more random tests,
         // but seems to be fine on 100 system tests
         DCHECK(full_data_len >= 2);
@@ -848,7 +851,7 @@ struct LoadCellData {
     if (!special) return td::Status::OK();
     TRY_STATUS(init_offsets());
     if (special_cell_type == -1) return td::Status::Error("Special cell type uninitialized");
-    if (special_cell_type != 1) return td::Status::OK();
+    if (special_cell_type != settings::PRUNNED_BRANCH_TYPE) return td::Status::OK();
     int l = (full_data_len - 2) / 34;
     for (int x = 0; x < l; ++x) {
       int id = prunned_branch_depths_offset + 2 * x;
@@ -864,7 +867,7 @@ struct LoadCellData {
     TRY_STATUS(init_d1());
     if (!special) return td::Status::OK();
     if (special_cell_type == -1) return td::Status::Error("Special cell type uninitialized");
-    if (special_cell_type != 1) return td::Status::OK();
+    if (special_cell_type != settings::PRUNNED_BRANCH_TYPE) return td::Status::OK();
     TRY_STATUS(init_offsets());
     int l = (full_data_len - 2) / 34;
     for (int i = 0; i < l; ++i) {
@@ -1049,8 +1052,13 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             cell_info[i].store_cell_uncompressed_data(bwriter);
             break;
           }
-          case settings::CELL_DATA_ORDER::special_cell_data: {
-            if (!cell_info[i].special) continue;
+          case settings::CELL_DATA_ORDER::prunned_branch_data: {
+            if (!cell_info[i].special || cell_info[i].special_cell_type != settings::PRUNNED_BRANCH_TYPE) continue;
+            cell_info[i].store_cell_uncompressed_data(bwriter);
+            break;
+          }
+          case settings::CELL_DATA_ORDER::other_special_cells_data: {
+            if (!cell_info[i].special || cell_info[i].special_cell_type == settings::PRUNNED_BRANCH_TYPE) continue;
             cell_info[i].store_cell_uncompressed_data(bwriter);
             break;
           }
@@ -1193,9 +1201,16 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
             }
             break;
           }
-          case settings::CELL_DATA_ORDER::special_cell_data: {
+          case settings::CELL_DATA_ORDER::prunned_branch_data: {
             TRY_STATUS(cell_info.init_d1());
-            if (cell_info.special) {
+            if (cell_info.special && cell_info.special_cell_type == settings::PRUNNED_BRANCH_TYPE) {
+              TRY_STATUS(cell_info.load_cell_uncompressed_data(breader));
+            }
+            break;
+          }
+          case settings::CELL_DATA_ORDER::other_special_cells_data: {
+            TRY_STATUS(cell_info.init_d1());
+            if (cell_info.special && cell_info.special_cell_type != settings::PRUNNED_BRANCH_TYPE) {
               TRY_STATUS(cell_info.load_cell_uncompressed_data(breader));
             }
             break;
