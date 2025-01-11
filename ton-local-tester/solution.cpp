@@ -984,6 +984,9 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       cell_info[i].data[x - 2] = buf[x];
     }
     TRY_STATUS(cell_info[i].init_offsets());
+    if (!cell_info[i].special && cell_info[i].full_data_len >= 2) {
+      add_int("two_bytes", (uint16_t(buf[2]) << 8) + uint16_t(buf[3]));
+    }
   }
 
   for (auto stored_data : settings::save_data_order) {
@@ -993,11 +996,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       auto start_position = bwriter.position();
       const auto& dc_info = cell_list_[idx];
       const Ref<DataCell>& dc = dc_info.dc_ref;
-      int s = serialized_cells[i].size();
-      auto* buf = serialized_cells[i].data();
-      if (!cell_info[i].special && cell_info[i].full_data_len >= 2) {
-        add_int("two_bytes", (uint16_t(buf[2]) << 8) + uint16_t(buf[3]));
-      }
       auto get_cell_ref_diffs = [&]() {
         std::vector<int> ref_diffs;
         for (unsigned j = 0; j < dc_info.ref_num; ++j) {
