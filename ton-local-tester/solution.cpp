@@ -146,42 +146,12 @@ namespace log_level {
     #define MSG(level, ...) 0
 #endif
 
-namespace settings {
-  bool use_bwt = false;
-  constexpr int PRUNNED_BRANCH_TYPE = 1;
-  enum class cell_data_order {
-    D1,
-    D2,
-    SPECIAL_CELL_TYPE,
-    CELL_REFS,
-    FLUSH_BYTE,
-    ORDINARY_FIRST_BYTE,
-    PRUNNED_BRANCH_DEPTHS,
-    ORDINARY_CELL_DATA,
-    PRUNNED_BRANCH_DATA,
-    OTHER_SPECIAL_CELLS_DATA,
-    SORT_CELLS_BY_META,
-  };
-  using cell_fields = std::vector<cell_data_order>;
-
-  static const std::vector<cell_fields> save_data_order = {
-    {cell_data_order::D1,cell_data_order::D2,cell_data_order::SPECIAL_CELL_TYPE,cell_data_order::ORDINARY_FIRST_BYTE,cell_data_order::FLUSH_BYTE,},
-    {cell_data_order::CELL_REFS,},
-    {cell_data_order::SORT_CELLS_BY_META,},
-    {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
-    {cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
-    {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
-    {cell_data_order::PRUNNED_BRANCH_DEPTHS,},
-  };
-
-  enum class FinalCompression {
-    ORIGINAL,
-    LZ4,
-    DEFLATE
-  };
-
-  static constexpr enum FinalCompression final_compression = FinalCompression::DEFLATE;
+struct SliceTransform {
+  virtual td::BufferSlice apply_transform(td::Slice slice) = 0;
+  virtual td::BufferSlice revert_transform(td::Slice slice) = 0;
 };
+
+
 
 namespace BWT {
 
@@ -592,51 +562,95 @@ void init_prunned_depth() {
 
 namespace compression {
 
-td::BufferSlice apply_final_compression(enum settings::FinalCompression final_compression, td::Slice data) {
-  switch (final_compression) {
-    case settings::FinalCompression::ORIGINAL:
-      return td::BufferSlice(data);
-    case settings::FinalCompression::LZ4:
-      return td::lz4_compress(data);
-    case settings::FinalCompression::DEFLATE:
-      return td::gzencode(data, 2);
-    default:
-      throw std::invalid_argument("Unknown compression type");
-  }
-}
-td::BufferSlice invert_final_compression(enum settings::FinalCompression final_compression, td::Slice data) {
-  switch (final_compression) {
-    case settings::FinalCompression::ORIGINAL:
-      return td::BufferSlice(data);
-    case settings::FinalCompression::LZ4:
-      return td::lz4_decompress(data, 2 << 20).move_as_ok();
-    case settings::FinalCompression::DEFLATE:
-      return td::gzdecode(data);
-    default:
-      throw std::invalid_argument("Unknown compression type");
-  }
-}
+enum class FinalCompression {
+  ORIGINAL,
+  LZ4,
+  DEFLATE
+};
 
 
-td::BufferSlice applyBWT(td::Slice data) {
-  auto [bwt_result, special_symbol_pos] = BWT::bwt(BWT::to_byte_buffer(data));
-  BWT::byte_buffer special_sumbol_bytes = {
-    special_symbol_pos & 255,
-    special_symbol_pos >> 8 & 255,
-    special_symbol_pos >> 16 & 255
-  };
-  bwt_result.insert(bwt_result.begin(), special_sumbol_bytes.begin(), special_sumbol_bytes.end());
-  return std::move(BWT::from_byte_buffer(bwt_result));
-}
-td::BufferSlice inverseBWT(td::Slice data) {
-  auto ptr = data.ubegin();
-  int special_symbol_pos = (int(ptr[0]) << 0) + (int(ptr[1]) << 8) + (int(ptr[2]) << 16);
-  data.remove_prefix(3);
-  auto inverse_bwt = BWT::inverse_bwt(BWT::to_byte_buffer(data), special_symbol_pos);
-  return std::move(BWT::from_byte_buffer(inverse_bwt));
-}
+struct STDCompressor : public SliceTransform {
+  enum FinalCompression final_compression;
+  STDCompressor(enum FinalCompression _final_compression) : final_compression(_final_compression) {}
+  virtual td::BufferSlice apply_transform(td::Slice data) override {
+    switch (final_compression) {
+      case FinalCompression::ORIGINAL:
+        return td::BufferSlice(data);
+      case FinalCompression::LZ4:
+        return td::lz4_compress(data);
+      case FinalCompression::DEFLATE:
+        return td::gzencode(data, 2);
+      default:
+        throw std::invalid_argument("Unknown compression type");
+    }
+  }
+  virtual td::BufferSlice revert_transform(td::Slice data) override {
+    switch (final_compression) {
+      case FinalCompression::ORIGINAL:
+        return td::BufferSlice(data);
+      case FinalCompression::LZ4:
+        return td::lz4_decompress(data, 2 << 20).move_as_ok();
+      case FinalCompression::DEFLATE:
+        return td::gzdecode(data);
+      default:
+        throw std::invalid_argument("Unknown compression type");
+    }
+  }
+};
+
+struct BWTTransform : public SliceTransform {
+  virtual td::BufferSlice apply_transform(td::Slice data) override {
+    auto [bwt_result, special_symbol_pos] = BWT::bwt(BWT::to_byte_buffer(data));
+    BWT::byte_buffer special_sumbol_bytes = {
+      special_symbol_pos & 255,
+      special_symbol_pos >> 8 & 255,
+      special_symbol_pos >> 16 & 255
+    };
+    bwt_result.insert(bwt_result.begin(), special_sumbol_bytes.begin(), special_sumbol_bytes.end());
+    return std::move(BWT::from_byte_buffer(bwt_result));
+  }
+  virtual td::BufferSlice revert_transform(td::Slice data) override {
+    auto ptr = data.ubegin();
+    int special_symbol_pos = (int(ptr[0]) << 0) + (int(ptr[1]) << 8) + (int(ptr[2]) << 16);
+    data.remove_prefix(3);
+    auto inverse_bwt = BWT::inverse_bwt(BWT::to_byte_buffer(data), special_symbol_pos);
+    return std::move(BWT::from_byte_buffer(inverse_bwt));
+  }
+};
 
 } // namespace compression
+
+namespace settings {
+  bool use_bwt = false;
+  constexpr int PRUNNED_BRANCH_TYPE = 1;
+  enum class cell_data_order {
+    D1,
+    D2,
+    SPECIAL_CELL_TYPE,
+    CELL_REFS,
+    FLUSH_BYTE,
+    ORDINARY_FIRST_BYTE,
+    PRUNNED_BRANCH_DEPTHS,
+    ORDINARY_CELL_DATA,
+    PRUNNED_BRANCH_DATA,
+    OTHER_SPECIAL_CELLS_DATA,
+    SORT_CELLS_BY_META,
+  };
+  using cell_fields = std::vector<cell_data_order>;
+  using cell_field_groups = std::vector<cell_fields>;
+
+  static const cell_field_groups save_data_order = {
+    {cell_data_order::D1,cell_data_order::D2,cell_data_order::SPECIAL_CELL_TYPE,cell_data_order::ORDINARY_FIRST_BYTE,cell_data_order::FLUSH_BYTE,},
+    {cell_data_order::CELL_REFS,},
+    {cell_data_order::SORT_CELLS_BY_META,},
+    {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
+    {cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
+    {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
+    {cell_data_order::PRUNNED_BRANCH_DEPTHS,},
+  };
+
+  static constexpr enum compression::FinalCompression final_compression = compression::FinalCompression::DEFLATE;
+};
 
 namespace vm {
 
@@ -1435,13 +1449,13 @@ td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty =
 td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
   td::BufferSlice serialized = vm::custom_boc_serialize(root).move_as_ok();
-  auto with_bwt = settings::use_bwt ? td::BufferSlice(compression::applyBWT(std::move(serialized))) : std::move(serialized);
-  return compression::apply_final_compression(settings::final_compression, std::move(with_bwt));
+  auto with_bwt = settings::use_bwt ? compression::BWTTransform().apply_transform(std::move(serialized)) : std::move(serialized);
+  return compression::STDCompressor(settings::final_compression).apply_transform(std::move(with_bwt));
 }
 
 td::BufferSlice decompress(td::Slice data) {
-  auto decompressed = compression::invert_final_compression(settings::final_compression, data);
-  auto without_bwt = settings::use_bwt ? compression::inverseBWT(std::move(decompressed)) : std::move(decompressed);
+  auto decompressed = compression::STDCompressor(settings::final_compression).revert_transform(data);
+  auto without_bwt = settings::use_bwt ? compression::BWTTransform().revert_transform(std::move(decompressed)) : std::move(decompressed);
   vm::Ref<vm::Cell> root = vm::custom_boc_deserialize(without_bwt).move_as_ok();
   return vm::std_boc_serialize(root, 31).move_as_ok();
 }
