@@ -164,12 +164,12 @@ namespace settings {
   };
   static const std::vector<std::vector<enum CELL_DATA_ORDER>> save_data_order = {
     {CELL_DATA_ORDER::d1,CELL_DATA_ORDER::d2,CELL_DATA_ORDER::special_cell_type,CELL_DATA_ORDER::ordinary_first_byte,CELL_DATA_ORDER::flush_byte,},
+    {CELL_DATA_ORDER::prunned_branch_depths,},
+    {CELL_DATA_ORDER::cell_refs,},
     {CELL_DATA_ORDER::sort_cells_by_meta,},
     {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::ordinary_cell_data,CELL_DATA_ORDER::flush_byte},
     {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::prunned_branch_data,CELL_DATA_ORDER::flush_byte},
     {CELL_DATA_ORDER::flush_byte, CELL_DATA_ORDER::other_special_cells_data, CELL_DATA_ORDER::flush_byte},
-    {CELL_DATA_ORDER::prunned_branch_depths,},
-    {CELL_DATA_ORDER::cell_refs,},
   };
 
   enum class FinalCompression {
@@ -814,8 +814,7 @@ struct LoadCellData {
         DCHECK(full_data_len >= 2);
         data[1] = 1;
         uncompressed_data_offset = 2;
-        int l = (full_data_len - 2) / 34;
-        uncompressed_data_len = 32 * l;
+        uncompressed_data_len = 32 * prunned_branches_count();
         prunned_branch_depths_offset = uncompressed_data_offset + uncompressed_data_len;
       } else {
         uncompressed_data_offset = 1;
@@ -848,6 +847,11 @@ struct LoadCellData {
     return td::Status::OK();
   }
 
+  int prunned_branches_count() const {
+    DCHECK(special && special_cell_type == 1);
+    return (full_data_len - 2) / 34;
+  }
+
   template<class Writer>
   td::Status store_prunned_branch_depths(BitWriter<Writer>& bwriter) {
     TRY_STATUS(init_d1());
@@ -855,8 +859,7 @@ struct LoadCellData {
     TRY_STATUS(init_offsets());
     if (special_cell_type == -1) return td::Status::Error("Special cell type uninitialized");
     if (special_cell_type != settings::PRUNNED_BRANCH_TYPE) return td::Status::OK();
-    int l = (full_data_len - 2) / 34;
-    for (int x = 0; x < l; ++x) {
+    for (int x = 0; x < prunned_branches_count(); ++x) {
       int id = prunned_branch_depths_offset + 2 * x;
       int val = (uint16_t(data[id]) << 8) | uint16_t(data[id + 1]);
       add_int("prunned_depth", val);
@@ -872,8 +875,7 @@ struct LoadCellData {
     if (special_cell_type == -1) return td::Status::Error("Special cell type uninitialized");
     if (special_cell_type != settings::PRUNNED_BRANCH_TYPE) return td::Status::OK();
     TRY_STATUS(init_offsets());
-    int l = (full_data_len - 2) / 34;
-    for (int i = 0; i < l; ++i) {
+    for (int i = 0; i < prunned_branches_count(); ++i) {
       int id = prunned_branch_depths_offset + 2 * i;
       // data[id] = breader.read_bits(8);
       // data[id + 1] = breader.read_bits(8);
@@ -885,7 +887,7 @@ struct LoadCellData {
   }
 
   template<class Writer>
-  td::Status store_ref_diffs(BitWriter<Writer>& bwriter, const std::vector<int>& ref_diffs) {
+  td::Status store_ref_diffs(BitWriter<Writer>& bwriter) {
     for (auto ref_diff : ref_diffs) {
       add_int("ref_diff", ref_diff);
       huffman::ref_diff.write(bwriter, ref_diff);
@@ -922,11 +924,40 @@ struct LoadCellData {
     return td::Status::OK();
   }
 
-  // return -1 if a < b, 1 if a > b and 0 if a == b
+  // int compare_prunned_branches(const LoadCellData& other) const {
+  //   if (special_cell_type != 1 || other.special_cell_type != 1) return 0;
+  //   int count = prunned_branches_count();
+  //   int other_count = prunned_branches_count();
+  //   if (count != other_count) {
+  //     return count < other_count ? -1 : 1;
+  //   }
+  //   return memcmp(data.data() + prunned_branch_depths_offset,
+  //                 other.data.data() + other.prunned_branch_depths_offset,
+  //                 count * 2);
+  // }
+
+  // return <0 if a < b, >0 if a > b and 0 if a == b
   int compare_meta(const LoadCellData& other) const {
-    if (d1 != other.d1) {
-      return d1 < other.d1 ? -1 : 1;
+    if (level_mask.get_mask() != other.level_mask.get_mask()) {
+      return level_mask.get_mask() < other.level_mask.get_mask() ? -1 : 1;
     }
+    if (refs_cnt != other.refs_cnt) {
+      return refs_cnt < other.refs_cnt ? -1 : 1;
+    }
+    if (d2 != other.d2) {
+      return d2 < other.d2 ? -1 : 1;
+    }
+    if (ordinary_first_byte != other.ordinary_first_byte) {
+      return ordinary_first_byte < other.ordinary_first_byte ? -1 : 1;
+    }
+    if (special_cell_type != other.special_cell_type) {
+      return special_cell_type < other.special_cell_type ? -1 : 1;
+    }
+    // auto check_prunned_branches = compare_prunned_branches(other);
+    // if (check_prunned_branches != 0) return check_prunned_branches;
+    // if (ref_diffs != other.ref_diffs) {
+    //   return ref_diffs < other.ref_diffs ? -1 : 1;
+    // }
     return 0;
   }
 };
@@ -1030,7 +1061,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
           case settings::CELL_DATA_ORDER::sort_cells_by_meta: {
             std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
               auto check = cell_info[a].compare_meta(cell_info[b]);
-              if (check != 0) return check == -1;
+              if (check != 0) return check < 0;
               return a > b;
             });
             goto next_save_data_order;
@@ -1091,8 +1122,8 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
           }
           case settings::CELL_DATA_ORDER::cell_refs: {
             DCHECK(dc->size_refs() == dc_info.ref_num);
-            auto ref_diffs = get_cell_ref_diffs();
-            TRY_STATUS(cell_info[i].store_ref_diffs(bwriter, ref_diffs));
+            cell_info[i].ref_diffs = get_cell_ref_diffs();
+            TRY_STATUS(cell_info[i].store_ref_diffs(bwriter));
             break;
           }
           default:
