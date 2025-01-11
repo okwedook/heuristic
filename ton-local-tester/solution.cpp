@@ -149,27 +149,29 @@ namespace log_level {
 namespace settings {
   bool use_bwt = false;
   constexpr int PRUNNED_BRANCH_TYPE = 1;
-  enum class CELL_DATA_ORDER {
-    d1,
-    d2,
-    special_cell_type,
-    cell_refs,
-    flush_byte,
-    ordinary_first_byte,
-    prunned_branch_depths,
-    ordinary_cell_data,
-    prunned_branch_data,
-    other_special_cells_data,
-    sort_cells_by_meta,
+  enum class cell_data_order {
+    D1,
+    D2,
+    SPECIAL_CELL_TYPE,
+    CELL_REFS,
+    FLUSH_BYTE,
+    ORDINARY_FIRST_BYTE,
+    PRUNNED_BRANCH_DEPTHS,
+    ORDINARY_CELL_DATA,
+    PRUNNED_BRANCH_DATA,
+    OTHER_SPECIAL_CELLS_DATA,
+    SORT_CELLS_BY_META,
   };
-  static const std::vector<std::vector<enum CELL_DATA_ORDER>> save_data_order = {
-    {CELL_DATA_ORDER::d1,CELL_DATA_ORDER::d2,CELL_DATA_ORDER::special_cell_type,CELL_DATA_ORDER::ordinary_first_byte,CELL_DATA_ORDER::flush_byte,},
-    {CELL_DATA_ORDER::cell_refs,},
-    {CELL_DATA_ORDER::sort_cells_by_meta,},
-    {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::ordinary_cell_data,CELL_DATA_ORDER::flush_byte},
-    {CELL_DATA_ORDER::flush_byte,CELL_DATA_ORDER::prunned_branch_data,CELL_DATA_ORDER::flush_byte},
-    {CELL_DATA_ORDER::flush_byte, CELL_DATA_ORDER::other_special_cells_data, CELL_DATA_ORDER::flush_byte},
-    {CELL_DATA_ORDER::prunned_branch_depths,},
+  using cell_fields = std::vector<cell_data_order>;
+
+  static const std::vector<cell_fields> save_data_order = {
+    {cell_data_order::D1,cell_data_order::D2,cell_data_order::SPECIAL_CELL_TYPE,cell_data_order::ORDINARY_FIRST_BYTE,cell_data_order::FLUSH_BYTE,},
+    {cell_data_order::CELL_REFS,},
+    {cell_data_order::SORT_CELLS_BY_META,},
+    {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
+    {cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
+    {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
+    {cell_data_order::PRUNNED_BRANCH_DEPTHS,},
   };
 
   enum class FinalCompression {
@@ -1106,7 +1108,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       };
       for (auto mode : stored_data) {
         switch (mode) {
-          case settings::CELL_DATA_ORDER::sort_cells_by_meta: {
+          case settings::cell_data_order::SORT_CELLS_BY_META: {
             std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
               auto check = cell_info[a].compare_meta(cell_info[b]);
               if (check != 0) return check < 0;
@@ -1114,21 +1116,21 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             });
             goto next_save_data_order;
           }
-          case settings::CELL_DATA_ORDER::d1: {
+          case settings::cell_data_order::D1: {
             auto d1 = cell_info[i].d1;
             DBG(log_level::CELL_META, d1);
             add_char("d1", d1);
             huffman::d1.write(bwriter, d1);
             break;
           }
-          case settings::CELL_DATA_ORDER::d2: {
+          case settings::cell_data_order::D2: {
             auto d2 = cell_info[i].d2;
             DBG(log_level::CELL_META, d2);
             add_char("d2", d2);
             huffman::d2.write(bwriter, d2);
             break;
           }
-          case settings::CELL_DATA_ORDER::special_cell_type: {
+          case settings::cell_data_order::SPECIAL_CELL_TYPE: {
             if (cell_info[i].special) {
               auto special_type = cell_info[i].special_cell_type;
               add_char("special_cell_type", special_type);
@@ -1136,7 +1138,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             }
             break;
           }
-          case settings::CELL_DATA_ORDER::ordinary_first_byte: {
+          case settings::cell_data_order::ORDINARY_FIRST_BYTE: {
             if (!cell_info[i].special && cell_info[i].full_data_len > 0) {
               auto first_byte = cell_info[i].ordinary_first_byte;
               add_char("ordinary_first_byte", first_byte);
@@ -1144,31 +1146,31 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             }
             break;
           }
-          case settings::CELL_DATA_ORDER::flush_byte: {
+          case settings::cell_data_order::FLUSH_BYTE: {
             MSG(log_level::BIT_IO, "Custom byte flush");
             bwriter.flush_byte();
             break;
           }
-          case settings::CELL_DATA_ORDER::ordinary_cell_data: {
+          case settings::cell_data_order::ORDINARY_CELL_DATA: {
             if (cell_info[i].special) continue; 
             cell_info[i].store_cell_uncompressed_data(bwriter);
             break;
           }
-          case settings::CELL_DATA_ORDER::prunned_branch_data: {
+          case settings::cell_data_order::PRUNNED_BRANCH_DATA: {
             if (!cell_info[i].special || cell_info[i].special_cell_type != settings::PRUNNED_BRANCH_TYPE) continue;
             cell_info[i].store_cell_uncompressed_data(bwriter);
             break;
           }
-          case settings::CELL_DATA_ORDER::other_special_cells_data: {
+          case settings::cell_data_order::OTHER_SPECIAL_CELLS_DATA: {
             if (!cell_info[i].special || cell_info[i].special_cell_type == settings::PRUNNED_BRANCH_TYPE) continue;
             cell_info[i].store_cell_uncompressed_data(bwriter);
             break;
           }
-          case settings::CELL_DATA_ORDER::prunned_branch_depths: {
+          case settings::cell_data_order::PRUNNED_BRANCH_DEPTHS: {
             TRY_STATUS(cell_info[i].store_prunned_branch_depths(bwriter));
             break;
           }
-          case settings::CELL_DATA_ORDER::cell_refs: {
+          case settings::cell_data_order::CELL_REFS: {
             DCHECK(dc->size_refs() == dc_info.ref_num);
             cell_info[i].ref_diffs = get_cell_ref_diffs();
             TRY_STATUS(cell_info[i].store_ref_diffs(bwriter));
@@ -1272,7 +1274,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
 
       for (auto mode : stored_data) {
         switch (mode) {
-          case settings::CELL_DATA_ORDER::sort_cells_by_meta: {
+          case settings::cell_data_order::SORT_CELLS_BY_META: {
             std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
               auto check = cell_data[a].compare_meta(cell_data[b]);
               if (check != 0) return check == -1;
@@ -1280,15 +1282,15 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
             });
             goto next_load_data_order;
           }
-          case settings::CELL_DATA_ORDER::d1: {
+          case settings::cell_data_order::D1: {
             cell_info.d1 = huffman::d1.read(breader);
             break;
           }
-          case settings::CELL_DATA_ORDER::d2: {
+          case settings::cell_data_order::D2: {
             cell_info.d2 = huffman::d2.read(breader);
             break;
           }
-          case settings::CELL_DATA_ORDER::special_cell_type: {
+          case settings::cell_data_order::SPECIAL_CELL_TYPE: {
             TRY_STATUS(cell_info.init_d1());
             if (cell_info.special) {
               auto special_cell_type = huffman::special_cell_type.read(breader);
@@ -1296,7 +1298,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
             }
             break;
           }
-          case settings::CELL_DATA_ORDER::ordinary_first_byte: {
+          case settings::cell_data_order::ORDINARY_FIRST_BYTE: {
             TRY_STATUS(cell_info.init());
             if (!cell_info.special && cell_info.full_data_len > 0) {
               int ordinary_first_byte = huffman::ordinary_first_byte.read(breader);
@@ -1304,38 +1306,38 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
             }
             break;
           }
-          case settings::CELL_DATA_ORDER::flush_byte: {
+          case settings::cell_data_order::FLUSH_BYTE: {
             MSG(log_level::BIT_IO, "Custom flush byte");
             breader.flush_byte();
             break;
           }
-          case settings::CELL_DATA_ORDER::ordinary_cell_data: {
+          case settings::cell_data_order::ORDINARY_CELL_DATA: {
             TRY_STATUS(cell_info.init_d1());
             if (!cell_info.special) {
               TRY_STATUS(cell_info.load_cell_uncompressed_data(breader));
             }
             break;
           }
-          case settings::CELL_DATA_ORDER::prunned_branch_data: {
+          case settings::cell_data_order::PRUNNED_BRANCH_DATA: {
             TRY_STATUS(cell_info.init_d1());
             if (cell_info.special && cell_info.special_cell_type == settings::PRUNNED_BRANCH_TYPE) {
               TRY_STATUS(cell_info.load_cell_uncompressed_data(breader));
             }
             break;
           }
-          case settings::CELL_DATA_ORDER::other_special_cells_data: {
+          case settings::cell_data_order::OTHER_SPECIAL_CELLS_DATA: {
             TRY_STATUS(cell_info.init_d1());
             if (cell_info.special && cell_info.special_cell_type != settings::PRUNNED_BRANCH_TYPE) {
               TRY_STATUS(cell_info.load_cell_uncompressed_data(breader));
             }
             break;
           }
-          case settings::CELL_DATA_ORDER::cell_refs: {
+          case settings::cell_data_order::CELL_REFS: {
             TRY_STATUS(cell_info.init_d1());
             TRY_STATUS(cell_info.load_ref_diffs(breader));
             break;
           }
-          case settings::CELL_DATA_ORDER::prunned_branch_depths: {
+          case settings::cell_data_order::PRUNNED_BRANCH_DEPTHS: {
             TRY_STATUS(cell_info.load_prunned_branch_depths(breader));
             break;
           }
