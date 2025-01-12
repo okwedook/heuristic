@@ -107,7 +107,7 @@ namespace log_level {
     SKIP = 1000 // Logs, that are never written
   };
 
-  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::BIT;
+  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ALWAYS;
 
   static constexpr auto ENCODER_STAT = LOG_LEVEL::ONCE;
   static constexpr auto ENCODER_DATA = LOG_LEVEL::SKIP;
@@ -328,7 +328,6 @@ struct BitReader {
     if (bit_index == 8) {
       flush_byte();
     }
-    dbg(ptr, bit_index, data.size());
     if (ptr >= data.size()) {
       throw std::range_error("Trying to read more bits, than there is in a slice");
     }
@@ -535,7 +534,8 @@ REG_ENCODER(ref_perm_4);
 
 static const std::map<int, const HuffmanEncoder&> ref_perm = {{2,ref_perm_2},{3,ref_perm_3},{4,ref_perm_4}};
 
-HuffmanEncoder ref_diff, first_ref_diff;
+HuffmanEncoder ref_diff;
+HuffmanEncoder first_ref_diff, rest_ref_diff;
 HuffmanEncoder prunned_depth;
 
 void init_ref_diff(int cell_count) {
@@ -545,11 +545,21 @@ void init_ref_diff(int cell_count) {
     ref_diff_data.push_back({9000 / x, x});
   }
   ref_diff = HuffmanEncoder(ref_diff_data, "ref_diff");
-  distribution_data first_ref_diff_data = {{16280,0},{11152,1},{1601,2},{383,4},{383,3},{281,6},{228,5}};
-  for (int x = 7; x <= cell_count; ++x) {
-    first_ref_diff_data.push_back({1300 / x, x});
+
+  distribution_data first_ref_diff_data = {{22818,0},{11509,1},{1591,2}};
+  for (int x = 3; x <= cell_count; ++x) {
+    first_ref_diff_data.push_back({(2500) / x, x});
   }
   first_ref_diff = HuffmanEncoder(first_ref_diff_data, "first_ref_diff");
+
+  distribution_data rest_ref_diff_data = {{9602,2},{8605,1},{1254,3},{0, 0}};
+  for (int x = 4; x <= cell_count; ++x) {
+    rest_ref_diff_data.push_back({(3500) / x, x});
+  }
+  rest_ref_diff = HuffmanEncoder(rest_ref_diff_data, "rest_ref_diff");
+
+  // first_ref_diff = ref_diff;
+  // rest_ref_diff = ref_diff;
 }
 
 void init_prunned_depth() {
@@ -640,7 +650,7 @@ namespace settings {
     SPECIAL_CELL_TYPE,
     FIRST_CELL_REF,
     OTHER_CELL_REFS,
-    // REF_PERM,
+    REF_PERM,
     FLUSH_BYTE,
     ORDINARY_FIRST_BYTE,
     PRUNNED_BRANCH_DEPTHS,
@@ -672,7 +682,8 @@ namespace settings {
         deflate_compressor
       },
       {
-        // {cell_data_order::REF_PERM},
+        {cell_data_order::SORT_CELLS_BY_META,},
+        {cell_data_order::REF_PERM,},
         {cell_data_order::FIRST_CELL_REF},
         {cell_data_order::OTHER_CELL_REFS},
       },
@@ -683,7 +694,6 @@ namespace settings {
         deflate_compressor,
       },
       {
-        {cell_data_order::SORT_CELLS_BY_META,},
         {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
         {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
         {cell_data_order::PRUNNED_BRANCH_DEPTHS,},
@@ -820,7 +830,7 @@ struct LoadCellData {
   int prunned_branch_depths_offset = -1;
   std::vector<uint8_t> data;
   std::vector<int> ref_idx;
-  // std::vector<int> ref_order;
+  std::vector<int> ref_order;
   int refs_cnt = -1;
   bool special = false;
   Cell::LevelMask level_mask;
@@ -983,45 +993,44 @@ struct LoadCellData {
     return td::Status::OK();
   }
 
-  // template<class Writer>
-  // td::Status store_ref_perm(BitWriter<Writer>& bwriter) {
-  //   if (refs_cnt > 1) {
-  //     ref_order.resize(refs_cnt);
-  //     std::iota(all(ref_order), 0);
-  //     std::sort(all(ref_order), [&](int i, int j) {
-  //       return ref_idx[i] < ref_idx[j];
-  //     });
-  //     int ref_perm_num = 0;
-  //     for (auto i : ref_order) {
-  //       ref_perm_num = ref_perm_num * 10 + (i + 1);
-  //     }
-  //     add_int("ref_perm_" + std::to_string(refs_cnt), ref_perm_num);
-  //     dbg(ref_perm_num);
-  //     huffman::ref_perm.at(refs_cnt).write(bwriter, ref_perm_num);
-  //     std::sort(all(ref_idx));
-  //   }
-  //   return td::Status::OK();
-  // }
-  // td::Status load_ref_perm(BitReader& breader) {
-  //   ref_order.resize(refs_cnt);
-  //   if (refs_cnt > 1) {
-  //     int ref_perm_num = huffman::ref_perm.at(refs_cnt).read(breader);
-  //     for (int i = refs_cnt - 1; i >= 0; --i) {
-  //       ref_order[i] = ref_perm_num % 10 - 1;
-  //       ref_perm_num /= 10;
-  //     }
-  //   }
-  //   dbg(ref_order);
-  //   return td::Status::OK();
-  // }
-  // td::Status apply_ref_perm() {
-  //   std::vector<int> new_ref_idx(refs_cnt);
-  //   for (int i = 0; i < refs_cnt; ++i) {
-  //     new_ref_idx[i] = ref_idx[ref_order[i]];
-  //   }
-  //   ref_idx = new_ref_idx;
-  //   return td::Status::OK();
-  // }
+  template<class Writer>
+  td::Status store_ref_perm(BitWriter<Writer>& bwriter) {
+    if (refs_cnt > 1) {
+      ref_order.resize(refs_cnt);
+      std::iota(all(ref_order), 0);
+      std::sort(all(ref_order), [&](int i, int j) {
+        return ref_idx[i] < ref_idx[j];
+      });
+      int ref_perm_num = 0;
+      for (auto i : ref_order) {
+        ref_perm_num = ref_perm_num * 10 + (i + 1);
+      }
+      add_int("ref_perm_" + std::to_string(refs_cnt), ref_perm_num);
+      huffman::ref_perm.at(refs_cnt).write(bwriter, ref_perm_num);
+      std::sort(all(ref_idx));
+    }
+    return td::Status::OK();
+  }
+  td::Status load_ref_perm(BitReader& breader) {
+    ref_order.resize(refs_cnt);
+    if (refs_cnt > 1) {
+      int ref_perm_num = huffman::ref_perm.at(refs_cnt).read(breader);
+      for (int i = refs_cnt - 1; i >= 0; --i) {
+        ref_order[i] = ref_perm_num % 10 - 1;
+        ref_perm_num /= 10;
+      }
+    }
+    return td::Status::OK();
+  }
+  td::Status apply_ref_perm() {
+    if (ref_order.size() != refs_cnt) return td::Status::OK();
+    std::vector<int> new_ref_idx(refs_cnt);
+    for (int i = 0; i < refs_cnt; ++i) {
+      new_ref_idx[ref_order[i]] = ref_idx[i];
+    }
+    ref_idx = new_ref_idx;
+    return td::Status::OK();
+  }
 
 
   template<class Writer>
@@ -1029,14 +1038,14 @@ struct LoadCellData {
     if (refs_cnt > 0) {
       int first_ref_diff = ref_idx[0] - (from + 1);
       add_int("first_ref_diff", first_ref_diff);
-      huffman::ref_diff.write(bwriter, first_ref_diff);
+      huffman::first_ref_diff.write(bwriter, first_ref_diff);
     }
     return td::Status::OK();
   }
   td::Status load_first_ref_diff(BitReader& breader, int from) {
     ref_idx.resize(refs_cnt);
     if (refs_cnt > 0) {
-      ref_idx[0] = huffman::ref_diff.read(breader) + (from + 1);
+      ref_idx[0] = huffman::first_ref_diff.read(breader) + (from + 1);
     }
     return td::Status::OK();
   }
@@ -1046,14 +1055,14 @@ struct LoadCellData {
     for (int i = 1; i < refs_cnt; ++i) {
       int ref_diff = ref_idx[i] - (from + 1);
       add_int("rest_ref_diff", ref_diff);
-      huffman::ref_diff.write(bwriter, ref_diff);
+      huffman::rest_ref_diff.write(bwriter, ref_diff);
     }
     return td::Status::OK();
   }
   td::Status load_other_ref_diffs(BitReader& breader, int from) {
     ref_idx.resize(refs_cnt);
     for (int i = 1; i < refs_cnt; ++i) {
-      ref_idx[i] = huffman::ref_diff.read(breader) + (from + 1);
+      ref_idx[i] = huffman::rest_ref_diff.read(breader) + (from + 1);
     }
     return td::Status::OK();
   }
@@ -1273,11 +1282,10 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
               TRY_STATUS(cell_info[i].store_prunned_branch_depths(buffer_bwriter));
               break;
             }
-            // case settings::cell_data_order::REF_PERM: {
-            //   TRY_STATUS(cell_info[i].init_d1());
-            //   TRY_STATUS(cell_info[i].store_ref_perm(buffer_bwriter));
-            //   break;
-            // }
+            case settings::cell_data_order::REF_PERM: {
+              TRY_STATUS(cell_info[i].store_ref_perm(buffer_bwriter));
+              break;
+            }
             case settings::cell_data_order::FIRST_CELL_REF: {
               TRY_STATUS(cell_info[i].store_first_ref_diff(buffer_bwriter, i));
               break;
@@ -1307,14 +1315,14 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       std::cerr << '\n';
     }
 
-
-    for (const auto& transform : transforms) {
-      saved_data = transform->apply_transform(saved_data);
-    }
     if (name == "meta_data") {
       for (int i = 0; i < saved_data.size(); ++i) {
         add_char("meta_data_bytes", saved_data[i]);
       }
+    }
+
+    for (const auto& transform : transforms) {
+      saved_data = transform->apply_transform(saved_data);
     }
 
     MSG(log_level::COMPRESSION_META, name, ": Written bytes = ", written_bytes, ", transformed = ", saved_data.size(), ", CR = ", written_bytes * 1.0 / saved_data.size());
@@ -1488,11 +1496,11 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
               }
               break;
             }
-            // case settings::cell_data_order::REF_PERM: {
-            //   TRY_STATUS(cell_info.init_d1());
-            //   TRY_STATUS(cell_info.load_first_ref_diff(buffer_breader, idx));
-            //   break;
-            // }
+            case settings::cell_data_order::REF_PERM: {
+              TRY_STATUS(cell_info.init_d1());
+              TRY_STATUS(cell_info.load_ref_perm(buffer_breader));
+              break;
+            }
             case settings::cell_data_order::FIRST_CELL_REF: {
               TRY_STATUS(cell_info.init_d1());
               TRY_STATUS(cell_info.load_first_ref_diff(buffer_breader, idx));
@@ -1523,7 +1531,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     auto& cell_info = cell_data[i];
     cell_info.set_special_cell_type(cell_info.special_cell_type);
     cell_info.set_ordinary_first_byte(cell_info.ordinary_first_byte);
-    // cell_info.apply_ref_perm();
+    cell_info.apply_ref_perm();
 
     CellBuilder cb;
 

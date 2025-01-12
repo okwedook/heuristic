@@ -239,20 +239,16 @@ signed main() {
     }
     cout << "{\n";
     for (auto &[name, data] : byte_cnt) {
-      std::cerr << name.substr(0, 4) << '\n';
       if (name != "special_cell_type") {
-        if (name.substr(0, 4) == "perm") {
+        if (name.substr(0, 8) == "ref_perm") {
           int val = data.begin()->f;
-          std::cerr << val << '\n';
           int len = 0;
           while (val > 0) {
             val /= 10;
             ++len;
           }
-          std::cerr << len << '\n';
           string s(len, '#');
           iota(all(s), '1');
-          std::cerr << s << '\n';
           while (true) {
             int v = stoll(s);
             if (!data.count(v)) data[v] = 0;
