@@ -798,7 +798,7 @@ struct LoadCellData {
   int uncompressed_data_offset = -1, uncompressed_data_len = -1;
   int prunned_branch_depths_offset = -1;
   std::vector<uint8_t> data;
-  std::vector<int> ref_diffs;
+  std::vector<int> ref_idx;
   int refs_cnt = -1;
   bool special = false;
   Cell::LevelMask level_mask;
@@ -962,21 +962,28 @@ struct LoadCellData {
   }
 
   template<class Writer>
-  td::Status store_ref_diffs(BitWriter<Writer>& bwriter) {
-    for (auto ref_diff : ref_diffs) {
+  td::Status store_ref_diffs(BitWriter<Writer>& bwriter, int from) {
+    auto ref_diffs = ref_idx;
+    for (int i = int(ref_diffs.size()) - 1; i >= 0; --i) {
+      ref_diffs[i] -= from + 1;
+    }
+    dbg(ref_diffs);
+    for (auto ref : ref_idx) {
+      int ref_diff = ref - (from + 1);
       add_int("ref_diff", ref_diff);
       huffman::ref_diff.write(bwriter, ref_diff);
       // store_ref(ref_diff);
     }
-    DBG(log_level::LOG_LEVEL::SKIP, ref_diffs);
+    DBG(log_level::LOG_LEVEL::SKIP, ref_idx);
     return td::Status::OK();
   }
-  td::Status load_ref_diffs(BitReader& breader) {
+  td::Status load_ref_diffs(BitReader& breader, int from) {
     DBG(log_level::CELL_META, refs_cnt);
-    ref_diffs.resize(refs_cnt);
-    for (auto &diff : ref_diffs) {
+    ref_idx.resize(refs_cnt);
+    for (auto &ref : ref_idx) {
       // diff = breader.read_bits(info.ref_bit_size);
-      diff = huffman::ref_diff.read(breader);
+      auto ref_diff = huffman::ref_diff.read(breader);
+      ref = ref_diff + (from + 1);
     }
     return td::Status::OK();
   }
@@ -1095,18 +1102,17 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     if (!cell_info[i].special && cell_info[i].full_data_len >= 2) {
       add_int("two_bytes", (uint16_t(buf[2]) << 8) + uint16_t(buf[3]));
     }
-    auto get_cell_ref_diffs = [&]() {
-      std::vector<int> ref_diffs;
-      for (unsigned j = 0; j < dc_info.ref_num; ++j) {
-        int k = cell_count - 1 - dc_info.ref_idx[j];
-        MSG(log_level::CELL_META, "Link from ", i, " to ", k);
-        DCHECK(k > i && k < cell_count);
-        int ref_diff = k - i - 1;
-        ref_diffs.push_back(ref_diff);
+    auto get_cell_refs = [&]() {
+      std::vector<int> refs;
+      for (int j = 0; j < dc_info.ref_num; ++j) {
+        int ref = cell_count - 1 - dc_info.ref_idx[j];
+        MSG(log_level::CELL_META, "Link from ", i, " to ", ref);
+        DCHECK(ref > i && ref < cell_count);
+        refs.push_back(ref);
       }
-      return ref_diffs;
+      return refs;
     };
-    cell_info[i].ref_diffs = get_cell_ref_diffs();
+    cell_info[i].ref_idx = get_cell_refs();
   }
 
   std::vector<int> cell_order(cell_count);
@@ -1196,7 +1202,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             }
             case settings::cell_data_order::CELL_REFS: {
               DCHECK(dc->size_refs() == dc_info.ref_num);
-              TRY_STATUS(cell_info[i].store_ref_diffs(buffer_bwriter));
+              TRY_STATUS(cell_info[i].store_ref_diffs(buffer_bwriter, i));
               break;
             }
             default:
@@ -1412,7 +1418,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
             }
             case settings::cell_data_order::CELL_REFS: {
               TRY_STATUS(cell_info.init_d1());
-              TRY_STATUS(cell_info.load_ref_diffs(buffer_breader));
+              TRY_STATUS(cell_info.load_ref_diffs(buffer_breader, idx));
               break;
             }
             case settings::cell_data_order::PRUNNED_BRANCH_DEPTHS: {
@@ -1447,8 +1453,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     auto refs = td::MutableSpan<td::Ref<Cell>>(refs_buf).substr(0, cell_info.refs_cnt);
     for (int k = 0; k < cell_info.refs_cnt; k++) {
       // int ref_diff = huffman::ref_diff.read(breader);
-      int ref_diff = cell_info.ref_diffs[k];
-      int ref_idx = idx + 1 + ref_diff;
+      int ref_idx = cell_info.ref_idx[k];
       if (ref_idx <= idx) {
         return td::Status::Error(PSLICE() << "bag-of-cells error: reference #" << k << " of cell #" << idx
                                           << " is to cell #" << ref_idx << " with smaller index");
