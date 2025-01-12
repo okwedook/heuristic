@@ -178,7 +178,7 @@ struct HuffmanEncoder {
       compressed += len * count;
     }
     auto compression_ratio = uncompressed * 1.0 / compressed;
-    std::cerr << "Huffman encoder data for " << name << ": " << dbgout(uncompressed, compressed, compression_ratio) << '\n';
+    std::cerr << "Huffman encoder data for " << name << ": " << dbgout(uncompressed, compressed, compression_ratio, data.size()) << '\n';
   }
   int get_len(int value) const {
     return code_len.at(value).second;
@@ -239,8 +239,28 @@ signed main() {
     }
     cout << "{\n";
     for (auto &[name, data] : byte_cnt) {
+      std::cerr << name.substr(0, 4) << '\n';
       if (name != "special_cell_type") {
-        for (int i = 0; i < 256; ++i) data[i];
+        if (name.substr(0, 4) == "perm") {
+          int val = data.begin()->f;
+          std::cerr << val << '\n';
+          int len = 0;
+          while (val > 0) {
+            val /= 10;
+            ++len;
+          }
+          std::cerr << len << '\n';
+          string s(len, '#');
+          iota(all(s), '1');
+          std::cerr << s << '\n';
+          while (true) {
+            int v = stoll(s);
+            if (!data.count(v)) data[v] = 0;
+            if (!next_permutation(all(s))) break;
+          }
+        } else {
+          for (int i = 0; i < 256; ++i) data[i];
+        }
       }
       vector<pair<ll, int>> st_data;
       for (auto [value, cnt] : data) {

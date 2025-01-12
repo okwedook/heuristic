@@ -1,11 +1,3 @@
-/*
- * solution.cpp
- *
- * Example solution.
- * This is (almost) how blocks are actually compressed in TON.
- * Normally, blocks are stored using vm::std_boc_serialize with mode=31.
- * Compression algorithm takes a block, converts it to mode=2 (which has less extra information) and compresses it using lz4.
- */
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
@@ -115,9 +107,9 @@ namespace log_level {
     SKIP = 1000 // Logs, that are never written
   };
 
-  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ONCE;
+  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::BIT;
 
-  static constexpr auto ENCODER_STAT = LOG_LEVEL::ALWAYS;
+  static constexpr auto ENCODER_STAT = LOG_LEVEL::ONCE;
   static constexpr auto ENCODER_DATA = LOG_LEVEL::SKIP;
   static constexpr auto BIT_IO = LOG_LEVEL::BIT;
   static constexpr auto NUMBER = LOG_LEVEL::BYTE;
@@ -146,6 +138,8 @@ namespace log_level {
     #define MSG(level, ...) 0
 #endif
 
+#define all(a) a.begin(), a.end()
+
 uint8_t* get_buffer_slice_data(const td::BufferSlice& slice) {
   return const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(slice.data()));
 }
@@ -156,7 +150,6 @@ using namespace std;
 
 template<class T>
 inline int sz(const T &x) { return x.size(); }
-#define all(a) a.begin(), a.end()
 #define pb push_back
 using pii = pair<int, int>;
 template<class T>
@@ -273,7 +266,7 @@ byte_buffer inverse_bwt(byte_buffer bwt_input, size_t special_symbol_pos) {
     }
 
     // Sort pairs by character
-    std::sort(sorted_pairs.begin(), sorted_pairs.end());
+    std::sort(all(sorted_pairs));
 
     // Build the first column of the table
     std::vector<uint8_t> first_col(n);
@@ -335,6 +328,7 @@ struct BitReader {
     if (bit_index == 8) {
       flush_byte();
     }
+    dbg(ptr, bit_index, data.size());
     if (ptr >= data.size()) {
       throw std::range_error("Trying to read more bits, than there is in a slice");
     }
@@ -381,15 +375,15 @@ using distribution_data = std::vector<std::pair<long long, int>>;
 
 struct HuffmanEncoder {
   HuffmanEncoder() {}
-  HuffmanEncoder(const distribution_data& data, const std::string name) {
+  HuffmanEncoder(const distribution_data& data, const std::string& _name) : name(_name) {
     DBG(log_level::ENCODER_DATA, data);
     set_data(data);
     #ifndef ONLINE_JUDGE
-      eval_data(data, name);
+      eval_data(data);
     #endif
     build_index();
   }
-  void eval_data(const distribution_data& data, const std::string name) {
+  void eval_data(const distribution_data& data) {
     long long uncompressed = 0, compressed = 0;
     for (auto [count, value] : data) {
       auto [_, len] = code_len.at(value);
@@ -401,7 +395,7 @@ struct HuffmanEncoder {
   }
   template<class Writer>
   void write(BitWriter<Writer>& bwriter, int value) const {
-    MSG(log_level::NUMBER, "Huffman write ", value);
+    MSG(log_level::NUMBER, "Huffman write ", name, ' ', value);
     auto [code, len] = code_len.at(value);
     auto code_str = std::bitset<64>(code).to_string();
     reverse(code_str.begin(), code_str.end());
@@ -417,7 +411,7 @@ struct HuffmanEncoder {
       if (it != code_index.end()) {
         auto code_str = std::bitset<64>(code).to_string();
         reverse(code_str.begin(), code_str.end());
-        MSG(log_level::NUMBER, "Huffman read ", "0b", code_str.substr(b + 1), ' ', it->second);
+        MSG(log_level::NUMBER, "Huffman read ", name, " 0b", code_str.substr(0, b + 1), ' ', it->second);
         return it->second;
       }
     }
@@ -459,6 +453,7 @@ protected:
 private:
   std::map<int, std::pair<uint64_t, int>> code_len;
   std::map<std::pair<uint64_t, int>, int> code_index;
+  std::string name;
   void build_index() {
     for (auto [value, c_l] : code_len) {
       auto [code, len] = c_l;
@@ -523,26 +518,38 @@ static const std::map<std::string, distribution_data> huffman_data = {
 {"d2",{{14521,72},{9099,15},{7528,17},{7104,13},{4147,11},{3057,1},{1378,9},{1031,105},{971,130},{909,111},{845,113},{820,19},{777,181},{772,7},{657,177},{558,81},{391,171},{385,67},{348,158},{284,75},{278,89},{277,163},{248,21},{214,161},{212,149},{210,151},{210,23},{210,3},{183,104},{156,175},{154,33},{153,201},{143,153},{143,115},{139,66},{134,152},{134,69},{131,225},{123,135},{120,109},{117,157},{111,156},{111,20},{110,97},{110,73},{109,150},{101,10},{94,91},{91,87},{90,25},{87,147},{86,12},{83,99},{76,16},{74,155},{73,162},{72,112},{66,154},{65,107},{64,80},{60,102},{59,179},{59,169},{55,98},{53,2},{49,121},{49,18},{48,47},{45,5},{43,8},{42,117},{42,65},{41,100},{41,27},{40,160},{38,197},{38,183},{37,229},{36,148},{35,88},{35,68},{34,217},{33,131},{33,37},{32,170},{30,138},{30,14},{29,176},{29,145},{29,143},{29,103},{29,74},{28,173},{28,137},{28,95},{28,94},{27,219},{27,185},{26,178},{25,247},{25,203},{25,172},{24,254},{24,244},{23,222},{23,32},{22,159},{22,55},{22,0},{21,233},{21,174},{21,79},{21,77},{21,26},{21,24},{20,180},{20,110},{20,85},{19,192},{19,167},{19,141},{19,76},{18,235},{17,191},{17,122},{17,71},{17,31},{16,255},{16,83},{15,246},{15,168},{15,132},{15,119},{14,35},{13,251},{13,242},{13,195},{13,165},{13,30},{13,4},{12,230},{12,215},{12,133},{12,114},{12,70},{11,241},{11,227},{11,127},{11,108},{11,22},{10,128},{10,124},{10,123},{10,101},{10,51},{10,34},{10,29},{9,231},{9,182},{9,126},{9,106},{9,38},{8,249},{8,248},{8,220},{8,142},{8,118},{8,64},{8,57},{8,53},{8,28},{7,236},{7,234},{7,208},{7,205},{7,193},{7,129},{7,120},{6,213},{6,202},{6,92},{6,78},{5,252},{5,243},{5,223},{5,212},{5,204},{5,200},{5,166},{5,139},{5,58},{5,56},{5,40},{4,245},{4,221},{4,216},{4,214},{4,209},{4,199},{4,194},{4,189},{4,86},{4,50},{4,46},{4,44},{4,6},{3,226},{3,210},{3,116},{3,96},{3,82},{3,61},{3,60},{3,48},{3,42},{3,39},{2,253},{2,238},{2,224},{2,196},{2,190},{2,187},{2,146},{2,144},{2,140},{2,136},{2,90},{2,84},{2,49},{2,45},{2,36},{1,250},{1,240},{1,232},{1,228},{1,218},{1,211},{1,206},{1,198},{1,184},{1,164},{1,134},{1,93},{1,62},{1,59},{1,54},{1,52},{0,239},{0,237},{0,207},{0,188},{0,186},{0,125},{0,63},{0,43},{0,41}}},
 {"ordinary_first_byte",{{26346,0},{1641,190},{1232,32},{1139,12},{1032,114},{846,192},{787,82},{756,64},{711,189},{685,104},{650,1},{611,16},{571,72},{516,185},{511,224},{509,80},{497,201},{475,160},{469,167},{407,223},{391,166},{356,4},{353,191},{334,128},{322,184},{288,102},{274,86},{236,83},{227,136},{203,98},{203,13},{191,115},{189,15},{187,14},{186,67},{182,52},{165,188},{164,66},{156,100},{133,117},{130,118},{126,23},{125,130},{125,108},{115,96},{107,134},{106,135},{104,68},{103,124},{102,119},{97,116},{86,17},{85,221},{85,112},{77,125},{75,255},{75,127},{74,126},{60,8},{59,113},{57,122},{57,120},{53,176},{50,144},{49,84},{49,65},{48,59},{45,194},{44,20},{43,142},{42,5},{41,123},{39,101},{37,121},{35,237},{35,97},{35,49},{31,161},{31,88},{30,212},{30,208},{30,74},{29,155},{27,70},{26,219},{26,3},{25,178},{25,129},{25,48},{23,204},{23,6},{22,248},{22,81},{21,200},{20,175},{20,110},{20,18},{18,207},{18,109},{17,202},{17,62},{17,37},{16,209},{16,187},{16,183},{15,247},{15,173},{15,105},{15,71},{15,19},{14,249},{14,241},{14,195},{14,180},{14,163},{14,69},{13,242},{13,39},{12,169},{12,168},{12,151},{12,143},{12,73},{12,33},{11,228},{11,186},{11,162},{11,99},{10,196},{10,179},{10,95},{10,50},{9,41},{9,22},{8,227},{8,217},{8,147},{8,51},{7,240},{7,222},{7,182},{7,164},{7,106},{7,87},{7,24},{7,7},{6,216},{6,165},{6,140},{6,60},{6,56},{6,10},{5,244},{5,198},{5,181},{5,139},{5,46},{5,44},{5,2},{4,250},{4,234},{4,213},{4,206},{4,205},{4,203},{4,152},{4,138},{4,111},{4,103},{4,85},{4,76},{4,9},{3,253},{3,220},{3,211},{3,210},{3,172},{3,158},{3,157},{3,107},{3,94},{3,89},{3,79},{3,75},{3,53},{3,35},{2,254},{2,252},{2,215},{2,174},{2,159},{2,154},{2,146},{2,141},{2,90},{2,54},{2,47},{1,243},{1,239},{1,235},{1,233},{1,226},{1,177},{1,170},{1,156},{1,149},{1,133},{1,132},{1,91},{1,78},{1,77},{1,63},{1,57},{1,28},{1,21},{0,251},{0,246},{0,245},{0,238},{0,236},{0,232},{0,231},{0,230},{0,229},{0,225},{0,218},{0,214},{0,199},{0,197},{0,193},{0,171},{0,153},{0,150},{0,148},{0,145},{0,137},{0,131},{0,93},{0,92},{0,61},{0,58},{0,55},{0,45},{0,43},{0,42},{0,40},{0,38},{0,36},{0,34},{0,31},{0,30},{0,29},{0,27},{0,26},{0,25},{0,11}}},
 {"special_cell_type",{{14507,1},{84,2},{25,4},{6,3}}},
+{"ref_perm_2",{{28357,12},{7706,21}}},
+{"ref_perm_3",{{1523,123},{240,312},{38,231},{37,213},{29,132},{0,321}}},
+{"ref_perm_4",{{74,1234},{14,4123},{7,2341},{4,1342},{4,1243},{3,4231},{3,3421},{3,3412},{3,1423},{3,1324},{2,4132},{1,1432},{0,4321},{0,4312},{0,4213},{0,3241},{0,3214},{0,3142},{0,3124},{0,2431},{0,2413},{0,2314},{0,2143},{0,2134}}},
 };
 
+#define REG_ENCODER(name) static const HuffmanEncoder name(huffman_data.at(#name), #name)
 
-static const HuffmanEncoder d1(huffman_data.at("d1"), "d1");
-static const HuffmanEncoder d2(huffman_data.at("d2"), "d2");
-static const HuffmanEncoder special_cell_type(huffman_data.at("special_cell_type"), "special_cell_type");
-static const HuffmanEncoder ordinary_first_byte(huffman_data.at("ordinary_first_byte"), "ordinary_first_byte");
-HuffmanEncoder ref_diff;
+REG_ENCODER(d1);
+REG_ENCODER(d2);
+REG_ENCODER(special_cell_type);
+REG_ENCODER(ordinary_first_byte);
+REG_ENCODER(ref_perm_2);
+REG_ENCODER(ref_perm_3);
+REG_ENCODER(ref_perm_4);
+
+static const std::map<int, const HuffmanEncoder&> ref_perm = {{2,ref_perm_2},{3,ref_perm_3},{4,ref_perm_4}};
+
+HuffmanEncoder ref_diff, first_ref_diff;
 HuffmanEncoder prunned_depth;
 
 void init_ref_diff(int cell_count) {
   DBG(log_level::ENCODER_STAT, cell_count);
-  distribution_data ref_diff_data;
-  ref_diff_data.push_back({23000, 0});
-  ref_diff_data.push_back({20000, 1});
-  ref_diff_data.push_back({11000, 2});
+  distribution_data ref_diff_data = {{23000,0},{20000,1},{11000,2}};
   for (int x = 3; x <= cell_count; ++x) {
     ref_diff_data.push_back({9000 / x, x});
   }
   ref_diff = HuffmanEncoder(ref_diff_data, "ref_diff");
+  distribution_data first_ref_diff_data = {{16280,0},{11152,1},{1601,2},{383,4},{383,3},{281,6},{228,5}};
+  for (int x = 7; x <= cell_count; ++x) {
+    first_ref_diff_data.push_back({1300 / x, x});
+  }
+  first_ref_diff = HuffmanEncoder(first_ref_diff_data, "first_ref_diff");
 }
 
 void init_prunned_depth() {
@@ -633,6 +640,7 @@ namespace settings {
     SPECIAL_CELL_TYPE,
     FIRST_CELL_REF,
     OTHER_CELL_REFS,
+    // REF_PERM,
     FLUSH_BYTE,
     ORDINARY_FIRST_BYTE,
     PRUNNED_BRANCH_DEPTHS,
@@ -647,6 +655,7 @@ namespace settings {
   using slice_transforms = std::vector<std::shared_ptr<compression::SliceTransform>>;
 
   static const auto deflate_compressor = std::make_shared<compression::STDCompressor>(compression::FinalCompression::DEFLATE);
+  static const auto lz4_compressor = std::make_shared<compression::STDCompressor>(compression::FinalCompression::LZ4);
 
   static const std::vector<std::tuple<slice_transforms, cell_field_groups, std::string>> save_data_order = {
     {
@@ -660,9 +669,10 @@ namespace settings {
     },
     {
       {
-        // deflate_compressor
+        deflate_compressor
       },
       {
+        // {cell_data_order::REF_PERM},
         {cell_data_order::FIRST_CELL_REF},
         {cell_data_order::OTHER_CELL_REFS},
       },
@@ -810,6 +820,7 @@ struct LoadCellData {
   int prunned_branch_depths_offset = -1;
   std::vector<uint8_t> data;
   std::vector<int> ref_idx;
+  // std::vector<int> ref_order;
   int refs_cnt = -1;
   bool special = false;
   Cell::LevelMask level_mask;
@@ -972,6 +983,47 @@ struct LoadCellData {
     return td::Status::OK();
   }
 
+  // template<class Writer>
+  // td::Status store_ref_perm(BitWriter<Writer>& bwriter) {
+  //   if (refs_cnt > 1) {
+  //     ref_order.resize(refs_cnt);
+  //     std::iota(all(ref_order), 0);
+  //     std::sort(all(ref_order), [&](int i, int j) {
+  //       return ref_idx[i] < ref_idx[j];
+  //     });
+  //     int ref_perm_num = 0;
+  //     for (auto i : ref_order) {
+  //       ref_perm_num = ref_perm_num * 10 + (i + 1);
+  //     }
+  //     add_int("ref_perm_" + std::to_string(refs_cnt), ref_perm_num);
+  //     dbg(ref_perm_num);
+  //     huffman::ref_perm.at(refs_cnt).write(bwriter, ref_perm_num);
+  //     std::sort(all(ref_idx));
+  //   }
+  //   return td::Status::OK();
+  // }
+  // td::Status load_ref_perm(BitReader& breader) {
+  //   ref_order.resize(refs_cnt);
+  //   if (refs_cnt > 1) {
+  //     int ref_perm_num = huffman::ref_perm.at(refs_cnt).read(breader);
+  //     for (int i = refs_cnt - 1; i >= 0; --i) {
+  //       ref_order[i] = ref_perm_num % 10 - 1;
+  //       ref_perm_num /= 10;
+  //     }
+  //   }
+  //   dbg(ref_order);
+  //   return td::Status::OK();
+  // }
+  // td::Status apply_ref_perm() {
+  //   std::vector<int> new_ref_idx(refs_cnt);
+  //   for (int i = 0; i < refs_cnt; ++i) {
+  //     new_ref_idx[i] = ref_idx[ref_order[i]];
+  //   }
+  //   ref_idx = new_ref_idx;
+  //   return td::Status::OK();
+  // }
+
+
   template<class Writer>
   td::Status store_first_ref_diff(BitWriter<Writer>& bwriter, int from) {
     if (refs_cnt > 0) {
@@ -1018,8 +1070,8 @@ struct LoadCellData {
   td::Status load_cell_uncompressed_data(BitReader& breader) {
     TRY_STATUS(init_offsets());
     for (int i = uncompressed_data_offset; i < uncompressed_data_offset + uncompressed_data_len; ++i) {
-      MSG(log_level::LOG_LEVEL::BYTE, "Reading data ", uint16_t(data[i]));
       data[i] = breader.read_bits(8);
+      MSG(log_level::LOG_LEVEL::BYTE, "Reading data ", uint16_t(data[i]));
     }
     return td::Status::OK();
   }
@@ -1143,6 +1195,8 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 
 
   for (const auto& [transforms, stored_groups_of_fields, name] : settings::save_data_order) {
+    MSG(log_level::COMPRESSION_META, "Start writing block ", name);
+    
     auto* buff = get_buffer_slice_data(buff_slice);
     boc_writers::BufferWriter buffer_writer{buff, buff + buff_size};
     BitWriter buffer_bwriter(buffer_writer);
@@ -1158,7 +1212,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
           switch (mode) {
             case settings::cell_data_order::SORT_CELLS_BY_META: {
               MSG(log_level::COMPRESSION_META, "Sorting cells by meta info");
-              std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
+              std::sort(all(cell_order), [&](int a, int b) {
                 auto check = cell_info[a].compare_meta(cell_info[b]);
                 if (check != 0) return check < 0;
                 return a > b;
@@ -1219,6 +1273,11 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
               TRY_STATUS(cell_info[i].store_prunned_branch_depths(buffer_bwriter));
               break;
             }
+            // case settings::cell_data_order::REF_PERM: {
+            //   TRY_STATUS(cell_info[i].init_d1());
+            //   TRY_STATUS(cell_info[i].store_ref_perm(buffer_bwriter));
+            //   break;
+            // }
             case settings::cell_data_order::FIRST_CELL_REF: {
               TRY_STATUS(cell_info[i].store_first_ref_diff(buffer_bwriter, i));
               break;
@@ -1239,7 +1298,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     }
     buffer_bwriter.flush_byte();
     auto written_bytes = buffer_writer.position();
-    if (written_bytes == 0) continue;
     td::BufferSlice saved_data = td::BufferSlice(reinterpret_cast<char*>(get_buffer_slice_data(buff_slice)), written_bytes);
     if (log_level::check_log_level(log_level::LOG_LEVEL::BYTE)) {
       msg("Saving slice of size ", saved_data.size());
@@ -1340,7 +1398,9 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
 
   td::BufferSlice buffer;
 
-  for (const auto& [transforms, stored_groups_of_fields, _] : settings::save_data_order) {
+  for (const auto& [transforms, stored_groups_of_fields, name] : settings::save_data_order) {
+    MSG(log_level::COMPRESSION_META, "Start reading block ", name);
+
     int data_len = breader.read_bits(24);
 
     buffer = td::BufferSlice(data_len);
@@ -1371,7 +1431,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
         for (auto mode : stored_fields) {
           switch (mode) {
             case settings::cell_data_order::SORT_CELLS_BY_META: {
-              std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
+              std::sort(all(cell_order), [&](int a, int b) {
                 auto check = cell_data[a].compare_meta(cell_data[b]);
                 if (check != 0) return check == -1;
                 return a < b;
@@ -1428,6 +1488,11 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
               }
               break;
             }
+            // case settings::cell_data_order::REF_PERM: {
+            //   TRY_STATUS(cell_info.init_d1());
+            //   TRY_STATUS(cell_info.load_first_ref_diff(buffer_breader, idx));
+            //   break;
+            // }
             case settings::cell_data_order::FIRST_CELL_REF: {
               TRY_STATUS(cell_info.init_d1());
               TRY_STATUS(cell_info.load_first_ref_diff(buffer_breader, idx));
@@ -1458,6 +1523,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
     auto& cell_info = cell_data[i];
     cell_info.set_special_cell_type(cell_info.special_cell_type);
     cell_info.set_ordinary_first_byte(cell_info.ordinary_first_byte);
+    // cell_info.apply_ref_perm();
 
     CellBuilder cb;
 
@@ -1569,7 +1635,7 @@ int main() {
 
     for (auto &[name, data] : byte_cnt) {
       std::vector<std::pair<int, int>> st_data(data.begin(), data.end());
-      std::sort(st_data.begin(), st_data.end(), [&](auto a, auto b) {
+      std::sort(all(st_data), [&](auto a, auto b) {
         return a.second > b.second;
       });
       long long total = 0;
