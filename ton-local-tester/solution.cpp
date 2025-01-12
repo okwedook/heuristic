@@ -117,7 +117,7 @@ namespace log_level {
 
   static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ALWAYS;
 
-  static constexpr auto ENCODER_STAT = LOG_LEVEL::ALWAYS;
+  static constexpr auto ENCODER_STAT = LOG_LEVEL::SKIP;
   static constexpr auto ENCODER_DATA = LOG_LEVEL::SKIP;
   static constexpr auto BIT_IO = LOG_LEVEL::BIT;
   static constexpr auto NUMBER = LOG_LEVEL::BYTE;
@@ -146,12 +146,9 @@ namespace log_level {
     #define MSG(level, ...) 0
 #endif
 
-struct SliceTransform {
-  virtual td::BufferSlice apply_transform(td::Slice slice) = 0;
-  virtual td::BufferSlice revert_transform(td::Slice slice) = 0;
-};
-
-
+uint8_t* get_buffer_slice_data(const td::BufferSlice& slice) {
+  return const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(slice.data()));
+}
 
 namespace BWT {
 
@@ -227,7 +224,7 @@ byte_buffer to_byte_buffer(const td::Slice &data) {
 
 td::BufferSlice from_byte_buffer(byte_buffer data) {
   td::BufferSlice ans(data.size());
-  auto buffer = const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(ans.data()));
+  auto buffer = get_buffer_slice_data(ans);
   vm::boc_writers::BufferWriter writer{buffer, buffer + data.size()};
   for (auto i : data) {
     writer.store_uint(i, 1);
@@ -333,7 +330,7 @@ private:
 
 struct BitReader {
   // BitReader(const td::Slice& _data) : data(_data), ptr(0), bit_index(0) {}
-  BitReader(const td::Slice& _data, int _from_byte) : data(_data), ptr(_from_byte), bit_index(0) {}
+  BitReader(td::Slice _data, int _from_byte) : data(_data), ptr(_from_byte), bit_index(0) {}
   bool read_bit() {
     if (bit_index == 8) {
       flush_byte();
@@ -362,7 +359,7 @@ struct BitReader {
       bit_index = 0;
     }
   }
-  const td::Slice& get_data() const {
+  td::Slice get_data() const {
     return data;
   }
   int get_ptr() const {
@@ -372,7 +369,7 @@ struct BitReader {
     return ptr * 8 + bit_index;
   }
 private:
-  const td::Slice& data;
+  td::Slice data;
   int ptr;
   int bit_index;
 };
@@ -418,7 +415,9 @@ struct HuffmanEncoder {
       // code = (code << 1) + breader.read_bit();
       auto it = code_index.find({code, b + 1});
       if (it != code_index.end()) {
-        MSG(log_level::NUMBER, "Huffman read ", code, ' ', b + 1, ' ', it->second);
+        auto code_str = std::bitset<64>(code).to_string();
+        reverse(code_str.begin(), code_str.end());
+        MSG(log_level::NUMBER, "Huffman read ", "0b", code_str.substr(b + 1), ' ', it->second);
         return it->second;
       }
     }
@@ -562,6 +561,11 @@ void init_prunned_depth() {
 
 namespace compression {
 
+struct SliceTransform {
+  virtual td::BufferSlice apply_transform(td::Slice slice) = 0;
+  virtual td::BufferSlice revert_transform(td::Slice slice) = 0;
+};
+
 enum class FinalCompression {
   ORIGINAL,
   LZ4,
@@ -639,14 +643,23 @@ namespace settings {
   using cell_fields = std::vector<cell_data_order>;
   using cell_field_groups = std::vector<cell_fields>;
 
-  static const cell_field_groups save_data_order = {
-    {cell_data_order::D1,cell_data_order::D2,cell_data_order::SPECIAL_CELL_TYPE,cell_data_order::ORDINARY_FIRST_BYTE,cell_data_order::FLUSH_BYTE,},
-    {cell_data_order::CELL_REFS,},
-    {cell_data_order::SORT_CELLS_BY_META,},
-    {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
-    {cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
-    {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
-    {cell_data_order::PRUNNED_BRANCH_DEPTHS,},
+  using slice_transforms = std::vector<std::shared_ptr<compression::SliceTransform>>;
+
+  static const std::vector<std::pair<slice_transforms, cell_field_groups>> save_data_order = {
+    {
+      {
+        std::make_shared<compression::STDCompressor>(compression::FinalCompression::DEFLATE),
+      },
+      {
+        {cell_data_order::D1,cell_data_order::D2,cell_data_order::SPECIAL_CELL_TYPE,cell_data_order::ORDINARY_FIRST_BYTE,cell_data_order::FLUSH_BYTE,},
+        {cell_data_order::CELL_REFS,},
+        // {cell_data_order::SORT_CELLS_BY_META,},
+        {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
+        {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
+        {cell_data_order::PRUNNED_BRANCH_DEPTHS,},
+        {cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
+      }
+    },
   };
 
   static constexpr enum compression::FinalCompression final_compression = compression::FinalCompression::DEFLATE;
@@ -839,7 +852,7 @@ struct LoadCellData {
       return td::Status::Error("Invalid first byte");
     }
 
-    DBG(log_level::CELL_META, refs_cnt, d1 >> 5, special);
+    DBG(log_level::CELL_META, refs_cnt, level_mask.get_mask(), special);
 
     return td::Status::OK();
   }
@@ -1048,18 +1061,6 @@ long long CustomBagOfCells::Info::parse_serialized_header(BitReader& breader) {
   return 1;
 }
 
-//serialized_boc#672fb0ac has_idx:(## 1) has_crc32c:(## 1)
-//  has_cache_bits:(## 1) flags:(## 2) { flags = 0 }
-//  size:(## 3) { size <= 4 }
-//  off_bytes:(## 8) { off_bytes <= 8 }
-//  cells:(##(size * 8))
-//  roots:(##(size * 8))
-//  absent:(##(size * 8)) { roots + absent <= cells }
-//  tot_cells_size:(##(off_bytes * 8))
-//  index:(cells * ##(off_bytes * 8))
-//  cell_data:(tot_cells_size * [ uint8 ])
-//  = BagOfCells;
-// Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 template <typename WriterT>
 td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   BitWriter bwriter(writer);
@@ -1102,103 +1103,135 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   std::iota(cell_order.begin(), cell_order.end(), 0);
   std::reverse(cell_order.begin(), cell_order.end());
 
-  for (auto stored_data : settings::save_data_order) {
-    for (auto i : cell_order) {
-      int idx = cell_count - 1 - i;
-      MSG(log_level::CELL_META, "Saving cell with idx ", i, " with refnum ", int(cell_list_[idx].ref_num));
-      auto start_position = bwriter.position();
-      const auto& dc_info = cell_list_[idx];
-      const Ref<DataCell>& dc = dc_info.dc_ref;
-      auto get_cell_ref_diffs = [&]() {
-        std::vector<int> ref_diffs;
-        for (unsigned j = 0; j < dc_info.ref_num; ++j) {
-          int k = cell_count - 1 - dc_info.ref_idx[j];
-          MSG(log_level::CELL_META, "Link from ", i, " to ", k);
-          DCHECK(k > i && k < cell_count);
-          int ref_diff = k - i - 1;
-          ref_diffs.push_back(ref_diff);
-        }
-        return ref_diffs;
-      };
-      for (auto mode : stored_data) {
-        switch (mode) {
-          case settings::cell_data_order::SORT_CELLS_BY_META: {
-            std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
-              auto check = cell_info[a].compare_meta(cell_info[b]);
-              if (check != 0) return check < 0;
-              return a > b;
-            });
-            goto next_save_data_order;
+  static const int buff_size = 2 << 20;
+  td::BufferSlice buff_slice(buff_size);
+
+  for (const auto& [transforms, stored_groups_of_fields] : settings::save_data_order) {
+    auto* buff = get_buffer_slice_data(buff_slice);
+    boc_writers::BufferWriter buffer_writer{buff, buff + buff_size};
+    BitWriter buffer_bwriter(buffer_writer);
+
+    for (auto stored_fields : stored_groups_of_fields) {
+      for (auto i : cell_order) {
+        int idx = cell_count - 1 - i;
+        MSG(log_level::CELL_META, "Saving cell with idx ", i, " with refnum ", int(cell_list_[idx].ref_num));
+        auto start_position = buffer_bwriter.position();
+        const auto& dc_info = cell_list_[idx];
+        const Ref<DataCell>& dc = dc_info.dc_ref;
+        auto get_cell_ref_diffs = [&]() {
+          std::vector<int> ref_diffs;
+          for (unsigned j = 0; j < dc_info.ref_num; ++j) {
+            int k = cell_count - 1 - dc_info.ref_idx[j];
+            MSG(log_level::CELL_META, "Link from ", i, " to ", k);
+            DCHECK(k > i && k < cell_count);
+            int ref_diff = k - i - 1;
+            ref_diffs.push_back(ref_diff);
           }
-          case settings::cell_data_order::D1: {
-            auto d1 = cell_info[i].d1;
-            DBG(log_level::CELL_META, d1);
-            add_char("d1", d1);
-            huffman::d1.write(bwriter, d1);
-            break;
-          }
-          case settings::cell_data_order::D2: {
-            auto d2 = cell_info[i].d2;
-            DBG(log_level::CELL_META, d2);
-            add_char("d2", d2);
-            huffman::d2.write(bwriter, d2);
-            break;
-          }
-          case settings::cell_data_order::SPECIAL_CELL_TYPE: {
-            if (cell_info[i].special) {
-              auto special_type = cell_info[i].special_cell_type;
-              add_char("special_cell_type", special_type);
-              huffman::special_cell_type.write(bwriter, special_type);
+          return ref_diffs;
+        };
+        for (auto mode : stored_fields) {
+          switch (mode) {
+            case settings::cell_data_order::SORT_CELLS_BY_META: {
+              MSG(log_level::COMPRESSION_META, "Sorting cells by meta info");
+              std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
+                auto check = cell_info[a].compare_meta(cell_info[b]);
+                if (check != 0) return check < 0;
+                return a > b;
+              });
+              goto next_save_data_order;
             }
-            break;
-          }
-          case settings::cell_data_order::ORDINARY_FIRST_BYTE: {
-            if (!cell_info[i].special && cell_info[i].full_data_len > 0) {
-              auto first_byte = cell_info[i].ordinary_first_byte;
-              add_char("ordinary_first_byte", first_byte);
-              huffman::ordinary_first_byte.write(bwriter, first_byte);
+            case settings::cell_data_order::D1: {
+              auto d1 = cell_info[i].d1;
+              DBG(log_level::CELL_META, d1);
+              add_char("d1", d1);
+              huffman::d1.write(buffer_bwriter, d1);
+              break;
             }
-            break;
+            case settings::cell_data_order::D2: {
+              auto d2 = cell_info[i].d2;
+              DBG(log_level::CELL_META, d2);
+              add_char("d2", d2);
+              huffman::d2.write(buffer_bwriter, d2);
+              break;
+            }
+            case settings::cell_data_order::SPECIAL_CELL_TYPE: {
+              if (cell_info[i].special) {
+                auto special_type = cell_info[i].special_cell_type;
+                add_char("special_cell_type", special_type);
+                huffman::special_cell_type.write(buffer_bwriter, special_type);
+              }
+              break;
+            }
+            case settings::cell_data_order::ORDINARY_FIRST_BYTE: {
+              if (!cell_info[i].special && cell_info[i].full_data_len > 0) {
+                auto first_byte = cell_info[i].ordinary_first_byte;
+                add_char("ordinary_first_byte", first_byte);
+                huffman::ordinary_first_byte.write(buffer_bwriter, first_byte);
+              }
+              break;
+            }
+            case settings::cell_data_order::FLUSH_BYTE: {
+              MSG(log_level::BIT_IO, "Custom byte flush");
+              buffer_bwriter.flush_byte();
+              break;
+            }
+            case settings::cell_data_order::ORDINARY_CELL_DATA: {
+              if (cell_info[i].special) continue; 
+              cell_info[i].store_cell_uncompressed_data(buffer_bwriter);
+              break;
+            }
+            case settings::cell_data_order::PRUNNED_BRANCH_DATA: {
+              if (!cell_info[i].special || cell_info[i].special_cell_type != settings::PRUNNED_BRANCH_TYPE) continue;
+              cell_info[i].store_cell_uncompressed_data(buffer_bwriter);
+              break;
+            }
+            case settings::cell_data_order::OTHER_SPECIAL_CELLS_DATA: {
+              if (!cell_info[i].special || cell_info[i].special_cell_type == settings::PRUNNED_BRANCH_TYPE) continue;
+              cell_info[i].store_cell_uncompressed_data(buffer_bwriter);
+              break;
+            }
+            case settings::cell_data_order::PRUNNED_BRANCH_DEPTHS: {
+              TRY_STATUS(cell_info[i].store_prunned_branch_depths(buffer_bwriter));
+              break;
+            }
+            case settings::cell_data_order::CELL_REFS: {
+              DCHECK(dc->size_refs() == dc_info.ref_num);
+              cell_info[i].ref_diffs = get_cell_ref_diffs();
+              TRY_STATUS(cell_info[i].store_ref_diffs(buffer_bwriter));
+              break;
+            }
+            default:
+              throw std::logic_error("Not implemented data saving");
+              break;
           }
-          case settings::cell_data_order::FLUSH_BYTE: {
-            MSG(log_level::BIT_IO, "Custom byte flush");
-            bwriter.flush_byte();
-            break;
-          }
-          case settings::cell_data_order::ORDINARY_CELL_DATA: {
-            if (cell_info[i].special) continue; 
-            cell_info[i].store_cell_uncompressed_data(bwriter);
-            break;
-          }
-          case settings::cell_data_order::PRUNNED_BRANCH_DATA: {
-            if (!cell_info[i].special || cell_info[i].special_cell_type != settings::PRUNNED_BRANCH_TYPE) continue;
-            cell_info[i].store_cell_uncompressed_data(bwriter);
-            break;
-          }
-          case settings::cell_data_order::OTHER_SPECIAL_CELLS_DATA: {
-            if (!cell_info[i].special || cell_info[i].special_cell_type == settings::PRUNNED_BRANCH_TYPE) continue;
-            cell_info[i].store_cell_uncompressed_data(bwriter);
-            break;
-          }
-          case settings::cell_data_order::PRUNNED_BRANCH_DEPTHS: {
-            TRY_STATUS(cell_info[i].store_prunned_branch_depths(bwriter));
-            break;
-          }
-          case settings::cell_data_order::CELL_REFS: {
-            DCHECK(dc->size_refs() == dc_info.ref_num);
-            cell_info[i].ref_diffs = get_cell_ref_diffs();
-            TRY_STATUS(cell_info[i].store_ref_diffs(bwriter));
-            break;
-          }
-          default:
-            throw std::logic_error("Not implemented data saving");
-            break;
         }
+        next_save_data_order:;
+        auto end_position = buffer_bwriter.position();
+        MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
       }
-      auto end_position = bwriter.position();
-      MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
     }
-    next_save_data_order:;
+    buffer_bwriter.flush_byte();
+    auto written_bytes = buffer_writer.position();
+    if (written_bytes == 0) continue;
+    DBG(log_level::COMPRESSION_META, written_bytes);
+    td::BufferSlice saved_data = td::BufferSlice(reinterpret_cast<char*>(get_buffer_slice_data(buff_slice)), written_bytes);
+    if (log_level::check_log_level(log_level::LOG_LEVEL::BYTE)) {
+      msg("Saving slice of size ", saved_data.size());
+      for (int i = 0; i < saved_data.size(); ++i) {
+        std::cerr << uint16_t(uint8_t(saved_data[i])) << ' ';
+      }
+      std::cerr << '\n';
+    }
+
+    for (const auto& transform : transforms) {
+      saved_data = transform->apply_transform(saved_data);
+    }
+
+    bwriter.write_bits(saved_data.size(), 24);
+    for (int i = 0; i < saved_data.size(); ++i) {
+      bwriter.write_bits(uint8_t(saved_data[i]), 8);
+    }
+
   }
   bwriter.flush_byte(); // It's important to write the last byte, otherwise it will stay in the buffer
   writer.chk();
@@ -1242,8 +1275,7 @@ td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   }
   int buff_size = 4 << 20;
   td::BufferSlice res(buff_size);
-  TRY_RESULT(size, serialize_to(const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(res.data())),
-                                res.size()));
+  TRY_RESULT(size, serialize_to(get_buffer_slice_data(res), res.size()));
   MSG(log_level::COMPRESSION_META, "Expected size = ", size_est, ", Real size = ", size);
   if (size <= res.size()) {
     res.truncate(size);
@@ -1280,88 +1312,113 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
   std::vector<int> cell_order(cell_count);
   std::iota(cell_order.begin(), cell_order.end(), 0);
 
-  for (auto stored_data : settings::save_data_order) {
-    for (auto i : cell_order) {
-      int idx = cell_count - 1 - i;
-      MSG(log_level::CELL_META, "Deserializing cell with idx ", idx);
-      auto& cell_info = cell_data[i];
+  td::BufferSlice buffer;
 
-      for (auto mode : stored_data) {
-        switch (mode) {
-          case settings::cell_data_order::SORT_CELLS_BY_META: {
-            std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
-              auto check = cell_data[a].compare_meta(cell_data[b]);
-              if (check != 0) return check == -1;
-              return a < b;
-            });
-            goto next_load_data_order;
-          }
-          case settings::cell_data_order::D1: {
-            cell_info.d1 = huffman::d1.read(breader);
-            break;
-          }
-          case settings::cell_data_order::D2: {
-            cell_info.d2 = huffman::d2.read(breader);
-            break;
-          }
-          case settings::cell_data_order::SPECIAL_CELL_TYPE: {
-            TRY_STATUS(cell_info.init_d1());
-            if (cell_info.special) {
-              auto special_cell_type = huffman::special_cell_type.read(breader);
-              cell_info.set_special_cell_type(special_cell_type);
-            }
-            break;
-          }
-          case settings::cell_data_order::ORDINARY_FIRST_BYTE: {
-            TRY_STATUS(cell_info.init());
-            if (!cell_info.special && cell_info.full_data_len > 0) {
-              int ordinary_first_byte = huffman::ordinary_first_byte.read(breader);
-              cell_info.set_ordinary_first_byte(ordinary_first_byte);
-            }
-            break;
-          }
-          case settings::cell_data_order::FLUSH_BYTE: {
-            MSG(log_level::BIT_IO, "Custom flush byte");
-            breader.flush_byte();
-            break;
-          }
-          case settings::cell_data_order::ORDINARY_CELL_DATA: {
-            TRY_STATUS(cell_info.init_d1());
-            if (!cell_info.special) {
-              TRY_STATUS(cell_info.load_cell_uncompressed_data(breader));
-            }
-            break;
-          }
-          case settings::cell_data_order::PRUNNED_BRANCH_DATA: {
-            TRY_STATUS(cell_info.init_d1());
-            if (cell_info.special && cell_info.special_cell_type == settings::PRUNNED_BRANCH_TYPE) {
-              TRY_STATUS(cell_info.load_cell_uncompressed_data(breader));
-            }
-            break;
-          }
-          case settings::cell_data_order::OTHER_SPECIAL_CELLS_DATA: {
-            TRY_STATUS(cell_info.init_d1());
-            if (cell_info.special && cell_info.special_cell_type != settings::PRUNNED_BRANCH_TYPE) {
-              TRY_STATUS(cell_info.load_cell_uncompressed_data(breader));
-            }
-            break;
-          }
-          case settings::cell_data_order::CELL_REFS: {
-            TRY_STATUS(cell_info.init_d1());
-            TRY_STATUS(cell_info.load_ref_diffs(breader));
-            break;
-          }
-          case settings::cell_data_order::PRUNNED_BRANCH_DEPTHS: {
-            TRY_STATUS(cell_info.load_prunned_branch_depths(breader));
-            break;
-          }
+  for (const auto& [transforms, stored_groups_of_fields] : settings::save_data_order) {
+    int data_len = breader.read_bits(24);
 
-          default:
-            throw std::logic_error("Loading data not implemented");
+    buffer = td::BufferSlice(data_len);
+
+    for (int i = 0; i < data_len; ++i) {
+      buffer.as_slice()[i] = breader.read_bits(8);
+    }
+
+    for (int i = int(transforms.size()) - 1; i >= 0; --i) {
+      buffer = transforms[i]->revert_transform(buffer.as_slice());
+    }
+
+    if (log_level::check_log_level(log_level::LOG_LEVEL::BYTE)) {
+      msg("Loaded slice of size ", buffer.size());
+      for (int i = 0; i < buffer.size(); ++i) {
+        std::cerr << uint16_t(uint8_t(buffer[i])) << ' ';
+      }
+      std::cerr << '\n';
+    }
+
+    BitReader buffer_breader(buffer, 0);
+
+    for (auto stored_fields : stored_groups_of_fields) {
+      for (auto i : cell_order) {
+        int idx = cell_count - 1 - i;
+        MSG(log_level::CELL_META, "Deserializing cell with idx ", idx);
+        auto& cell_info = cell_data[i];
+        for (auto mode : stored_fields) {
+          switch (mode) {
+            case settings::cell_data_order::SORT_CELLS_BY_META: {
+              std::sort(cell_order.begin(), cell_order.end(), [&](int a, int b) {
+                auto check = cell_data[a].compare_meta(cell_data[b]);
+                if (check != 0) return check == -1;
+                return a < b;
+              });
+              goto next_load_data_order;
+            }
+            case settings::cell_data_order::D1: {
+              cell_info.d1 = huffman::d1.read(buffer_breader);
+              break;
+            }
+            case settings::cell_data_order::D2: {
+              cell_info.d2 = huffman::d2.read(buffer_breader);
+              break;
+            }
+            case settings::cell_data_order::SPECIAL_CELL_TYPE: {
+              TRY_STATUS(cell_info.init_d1());
+              if (cell_info.special) {
+                auto special_cell_type = huffman::special_cell_type.read(buffer_breader);
+                cell_info.set_special_cell_type(special_cell_type);
+              }
+              break;
+            }
+            case settings::cell_data_order::ORDINARY_FIRST_BYTE: {
+              TRY_STATUS(cell_info.init());
+              if (!cell_info.special && cell_info.full_data_len > 0) {
+                int ordinary_first_byte = huffman::ordinary_first_byte.read(buffer_breader);
+                cell_info.set_ordinary_first_byte(ordinary_first_byte);
+              }
+              break;
+            }
+            case settings::cell_data_order::FLUSH_BYTE: {
+              MSG(log_level::BIT_IO, "Custom flush byte");
+              buffer_breader.flush_byte();
+              break;
+            }
+            case settings::cell_data_order::ORDINARY_CELL_DATA: {
+              TRY_STATUS(cell_info.init_d1());
+              if (!cell_info.special) {
+                TRY_STATUS(cell_info.load_cell_uncompressed_data(buffer_breader));
+              }
+              break;
+            }
+            case settings::cell_data_order::PRUNNED_BRANCH_DATA: {
+              TRY_STATUS(cell_info.init_d1());
+              if (cell_info.special && cell_info.special_cell_type == settings::PRUNNED_BRANCH_TYPE) {
+                TRY_STATUS(cell_info.load_cell_uncompressed_data(buffer_breader));
+              }
+              break;
+            }
+            case settings::cell_data_order::OTHER_SPECIAL_CELLS_DATA: {
+              TRY_STATUS(cell_info.init_d1());
+              if (cell_info.special && cell_info.special_cell_type != settings::PRUNNED_BRANCH_TYPE) {
+                TRY_STATUS(cell_info.load_cell_uncompressed_data(buffer_breader));
+              }
+              break;
+            }
+            case settings::cell_data_order::CELL_REFS: {
+              TRY_STATUS(cell_info.init_d1());
+              TRY_STATUS(cell_info.load_ref_diffs(buffer_breader));
+              break;
+            }
+            case settings::cell_data_order::PRUNNED_BRANCH_DEPTHS: {
+              TRY_STATUS(cell_info.load_prunned_branch_depths(buffer_breader));
+              break;
+            }
+
+            default:
+              throw std::logic_error("Loading data not implemented");
+          }
         }
       }
+      next_load_data_order:;
     }
-    next_load_data_order:;
   }
   for (int i = 0; i < cell_count; i++) {
     // reconstruct cell with index cell_count - 1 - i
@@ -1449,14 +1506,11 @@ td::Result<Ref<Cell>> custom_boc_deserialize(td::Slice data, bool can_be_empty =
 td::BufferSlice compress(td::Slice data) {
   td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
   td::BufferSlice serialized = vm::custom_boc_serialize(root).move_as_ok();
-  auto with_bwt = settings::use_bwt ? compression::BWTTransform().apply_transform(std::move(serialized)) : std::move(serialized);
-  return compression::STDCompressor(settings::final_compression).apply_transform(std::move(with_bwt));
+  return serialized;
 }
 
 td::BufferSlice decompress(td::Slice data) {
-  auto decompressed = compression::STDCompressor(settings::final_compression).revert_transform(data);
-  auto without_bwt = settings::use_bwt ? compression::BWTTransform().revert_transform(std::move(decompressed)) : std::move(decompressed);
-  vm::Ref<vm::Cell> root = vm::custom_boc_deserialize(without_bwt).move_as_ok();
+  vm::Ref<vm::Cell> root = vm::custom_boc_deserialize(data).move_as_ok();
   return vm::std_boc_serialize(root, 31).move_as_ok();
 }
 
