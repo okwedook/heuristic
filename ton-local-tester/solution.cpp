@@ -652,14 +652,28 @@ namespace settings {
       },
       {
         {cell_data_order::D1,cell_data_order::D2,cell_data_order::SPECIAL_CELL_TYPE,cell_data_order::ORDINARY_FIRST_BYTE,cell_data_order::FLUSH_BYTE,},
+      }
+    },
+    {
+      {
+        std::make_shared<compression::STDCompressor>(compression::FinalCompression::DEFLATE),
+      },
+      {
         {cell_data_order::CELL_REFS,},
-        // {cell_data_order::SORT_CELLS_BY_META,},
+        {cell_data_order::SORT_CELLS_BY_META,},
         {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
         {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
         {cell_data_order::PRUNNED_BRANCH_DEPTHS,},
-        {cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
       }
     },
+    {
+      {
+        // Leave this block as is, since it contains totally random data (hashes)
+      },
+      {
+        {cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
+      }
+    }
   };
 
   static constexpr enum compression::FinalCompression final_compression = compression::FinalCompression::DEFLATE;
@@ -744,22 +758,13 @@ class CustomBagOfCells {
   std::vector<unsigned long long> custom_index;
 
  public:
-  void clear();
-  int set_roots(const std::vector<td::Ref<vm::Cell>>& new_roots);
-  int set_root(td::Ref<vm::Cell> new_root);
-  int add_roots(const std::vector<td::Ref<vm::Cell>>& add_roots);
-  int add_root(td::Ref<vm::Cell> add_root);
   td::Status import_cells() TD_WARN_UNUSED_RESULT;
   CustomBagOfCells() = default;
   std::size_t estimate_serialized_size();
-  td::Status serialize(int mode = 0);
-  td::string serialize_to_string(int mode = 0);
   td::Result<td::BufferSlice> serialize_to_slice();
   td::Result<std::size_t> serialize_to(unsigned char* buffer, std::size_t buff_size);
-  td::Status serialize_to_file(td::FileFd& fd, int mode = 0);
   template <typename WriterT>
   td::Result<std::size_t> serialize_to_impl(WriterT& writer);
-  std::string extract_string() const;
 
   td::Result<long long> deserialize(const td::Slice& data, int max_roots = default_max_roots);
   td::Result<long long> deserialize(const unsigned char* buffer, std::size_t buff_size,
@@ -773,11 +778,7 @@ class CustomBagOfCells {
     return (idx >= 0 && idx < root_count) ? roots.at(idx).cell : Ref<Cell>{};
   }
 
-  static int precompute_cell_serialization_size(const unsigned char* cell, std::size_t len, int ref_size,
-                                                int* refs_num_ptr = nullptr);
-
   int rv_idx;
-  td::Result<int> import_cell(td::Ref<vm::Cell> cell, int depth);
   void cells_clear() {
     cell_count = 0;
     int_refs = 0;
@@ -786,12 +787,6 @@ class CustomBagOfCells {
     cell_list_.clear();
   }
   td::uint64 compute_sizes();
-  void reorder_cells();
-  int revisit(int cell_idx, int force = 0);
-  unsigned long long get_idx_entry_raw(int index);
-  unsigned long long get_idx_entry(int index);
-  bool get_cache_entry(int index);
-  td::Result<td::Slice> get_cell_slice(int index, td::Slice data);
 };
 
 
@@ -1097,6 +1092,18 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     if (!cell_info[i].special && cell_info[i].full_data_len >= 2) {
       add_int("two_bytes", (uint16_t(buf[2]) << 8) + uint16_t(buf[3]));
     }
+    auto get_cell_ref_diffs = [&]() {
+      std::vector<int> ref_diffs;
+      for (unsigned j = 0; j < dc_info.ref_num; ++j) {
+        int k = cell_count - 1 - dc_info.ref_idx[j];
+        MSG(log_level::CELL_META, "Link from ", i, " to ", k);
+        DCHECK(k > i && k < cell_count);
+        int ref_diff = k - i - 1;
+        ref_diffs.push_back(ref_diff);
+      }
+      return ref_diffs;
+    };
+    cell_info[i].ref_diffs = get_cell_ref_diffs();
   }
 
   std::vector<int> cell_order(cell_count);
@@ -1105,6 +1112,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 
   static const int buff_size = 2 << 20;
   td::BufferSlice buff_slice(buff_size);
+
 
   for (const auto& [transforms, stored_groups_of_fields] : settings::save_data_order) {
     auto* buff = get_buffer_slice_data(buff_slice);
@@ -1118,17 +1126,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
         auto start_position = buffer_bwriter.position();
         const auto& dc_info = cell_list_[idx];
         const Ref<DataCell>& dc = dc_info.dc_ref;
-        auto get_cell_ref_diffs = [&]() {
-          std::vector<int> ref_diffs;
-          for (unsigned j = 0; j < dc_info.ref_num; ++j) {
-            int k = cell_count - 1 - dc_info.ref_idx[j];
-            MSG(log_level::CELL_META, "Link from ", i, " to ", k);
-            DCHECK(k > i && k < cell_count);
-            int ref_diff = k - i - 1;
-            ref_diffs.push_back(ref_diff);
-          }
-          return ref_diffs;
-        };
         for (auto mode : stored_fields) {
           switch (mode) {
             case settings::cell_data_order::SORT_CELLS_BY_META: {
@@ -1196,7 +1193,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
             }
             case settings::cell_data_order::CELL_REFS: {
               DCHECK(dc->size_refs() == dc_info.ref_num);
-              cell_info[i].ref_diffs = get_cell_ref_diffs();
               TRY_STATUS(cell_info[i].store_ref_diffs(buffer_bwriter));
               break;
             }
@@ -1205,10 +1201,10 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
               break;
           }
         }
-        next_save_data_order:;
         auto end_position = buffer_bwriter.position();
         MSG(log_level::CELL_META, "Cell position ", start_position, ' ', end_position);
       }
+      next_save_data_order:;
     }
     buffer_bwriter.flush_byte();
     auto written_bytes = buffer_writer.position();
@@ -1233,6 +1229,8 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     }
 
   }
+
+
   bwriter.flush_byte(); // It's important to write the last byte, otherwise it will stay in the buffer
   writer.chk();
   DBG(log_level::COMPRESSION_META, writer.position());
