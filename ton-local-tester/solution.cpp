@@ -115,7 +115,7 @@ namespace log_level {
     SKIP = 1000 // Logs, that are never written
   };
 
-  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ALWAYS;
+  static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ONCE;
 
   static constexpr auto ENCODER_STAT = LOG_LEVEL::SKIP;
   static constexpr auto ENCODER_DATA = LOG_LEVEL::SKIP;
@@ -645,14 +645,15 @@ namespace settings {
 
   using slice_transforms = std::vector<std::shared_ptr<compression::SliceTransform>>;
 
-  static const std::vector<std::pair<slice_transforms, cell_field_groups>> save_data_order = {
+  static const std::vector<std::tuple<slice_transforms, cell_field_groups, std::string>> save_data_order = {
     {
       {
         std::make_shared<compression::STDCompressor>(compression::FinalCompression::DEFLATE),
       },
       {
         {cell_data_order::D1,cell_data_order::D2,cell_data_order::SPECIAL_CELL_TYPE,cell_data_order::ORDINARY_FIRST_BYTE,cell_data_order::FLUSH_BYTE,},
-      }
+      },
+      "meta_data"
     },
     {
       {
@@ -664,7 +665,8 @@ namespace settings {
         {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
         {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
         {cell_data_order::PRUNNED_BRANCH_DEPTHS,},
-      }
+      },
+      "cell_data"
     },
     {
       {
@@ -672,7 +674,8 @@ namespace settings {
       },
       {
         {cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
-      }
+      },
+      "prunned_branch_data"
     }
   };
 
@@ -1114,7 +1117,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
   td::BufferSlice buff_slice(buff_size);
 
 
-  for (const auto& [transforms, stored_groups_of_fields] : settings::save_data_order) {
+  for (const auto& [transforms, stored_groups_of_fields, name] : settings::save_data_order) {
     auto* buff = get_buffer_slice_data(buff_slice);
     boc_writers::BufferWriter buffer_writer{buff, buff + buff_size};
     BitWriter buffer_bwriter(buffer_writer);
@@ -1218,11 +1221,17 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       std::cerr << '\n';
     }
 
+
     for (const auto& transform : transforms) {
       saved_data = transform->apply_transform(saved_data);
     }
+    if (name == "meta_data") {
+      for (int i = 0; i < saved_data.size(); ++i) {
+        add_char("meta_data_bytes", saved_data[i]);
+      }
+    }
 
-    MSG(log_level::COMPRESSION_META, "Written bytes = ", written_bytes, ", transformed = ", saved_data.size(), ", CR = ", written_bytes * 1.0 / saved_data.size());
+    MSG(log_level::COMPRESSION_META, name, ": Written bytes = ", written_bytes, ", transformed = ", saved_data.size(), ", CR = ", written_bytes * 1.0 / saved_data.size());
 
     bwriter.write_bits(saved_data.size(), 24);
     for (int i = 0; i < saved_data.size(); ++i) {
@@ -1313,7 +1322,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
 
   td::BufferSlice buffer;
 
-  for (const auto& [transforms, stored_groups_of_fields] : settings::save_data_order) {
+  for (const auto& [transforms, stored_groups_of_fields, _] : settings::save_data_order) {
     int data_len = breader.read_bits(24);
 
     buffer = td::BufferSlice(data_len);
