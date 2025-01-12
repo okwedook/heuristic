@@ -117,7 +117,7 @@ namespace log_level {
 
   static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ONCE;
 
-  static constexpr auto ENCODER_STAT = LOG_LEVEL::SKIP;
+  static constexpr auto ENCODER_STAT = LOG_LEVEL::ALWAYS;
   static constexpr auto ENCODER_DATA = LOG_LEVEL::SKIP;
   static constexpr auto BIT_IO = LOG_LEVEL::BIT;
   static constexpr auto NUMBER = LOG_LEVEL::BYTE;
@@ -522,7 +522,7 @@ static const std::map<std::string, distribution_data> huffman_data = {
 {"d1",{{28830,34},{14507,40},{7208,2},{4894,0},{4687,1},{1514,33},{1297,3},{570,35},{97,4},{84,8},{25,10},{24,36},{6,9},{0,255},{0,254},{0,253},{0,252},{0,251},{0,250},{0,249},{0,248},{0,247},{0,246},{0,245},{0,244},{0,243},{0,242},{0,241},{0,240},{0,239},{0,238},{0,237},{0,236},{0,235},{0,234},{0,233},{0,232},{0,231},{0,230},{0,229},{0,228},{0,227},{0,226},{0,225},{0,224},{0,223},{0,222},{0,221},{0,220},{0,219},{0,218},{0,217},{0,216},{0,215},{0,214},{0,213},{0,212},{0,211},{0,210},{0,209},{0,208},{0,207},{0,206},{0,205},{0,204},{0,203},{0,202},{0,201},{0,200},{0,199},{0,198},{0,197},{0,196},{0,195},{0,194},{0,193},{0,192},{0,191},{0,190},{0,189},{0,188},{0,187},{0,186},{0,185},{0,184},{0,183},{0,182},{0,181},{0,180},{0,179},{0,178},{0,177},{0,176},{0,175},{0,174},{0,173},{0,172},{0,171},{0,170},{0,169},{0,168},{0,167},{0,166},{0,165},{0,164},{0,163},{0,162},{0,161},{0,160},{0,159},{0,158},{0,157},{0,156},{0,155},{0,154},{0,153},{0,152},{0,151},{0,150},{0,149},{0,148},{0,147},{0,146},{0,145},{0,144},{0,143},{0,142},{0,141},{0,140},{0,139},{0,138},{0,137},{0,136},{0,135},{0,134},{0,133},{0,132},{0,131},{0,130},{0,129},{0,128},{0,127},{0,126},{0,125},{0,124},{0,123},{0,122},{0,121},{0,120},{0,119},{0,118},{0,117},{0,116},{0,115},{0,114},{0,113},{0,112},{0,111},{0,110},{0,109},{0,108},{0,107},{0,106},{0,105},{0,104},{0,103},{0,102},{0,101},{0,100},{0,99},{0,98},{0,97},{0,96},{0,95},{0,94},{0,93},{0,92},{0,91},{0,90},{0,89},{0,88},{0,87},{0,86},{0,85},{0,84},{0,83},{0,82},{0,81},{0,80},{0,79},{0,78},{0,77},{0,76},{0,75},{0,74},{0,73},{0,72},{0,71},{0,70},{0,69},{0,68},{0,67},{0,66},{0,65},{0,64},{0,63},{0,62},{0,61},{0,60},{0,59},{0,58},{0,57},{0,56},{0,55},{0,54},{0,53},{0,52},{0,51},{0,50},{0,49},{0,48},{0,47},{0,46},{0,45},{0,44},{0,43},{0,42},{0,41},{0,39},{0,38},{0,37},{0,32},{0,31},{0,30},{0,29},{0,28},{0,27},{0,26},{0,25},{0,24},{0,23},{0,22},{0,21},{0,20},{0,19},{0,18},{0,17},{0,16},{0,15},{0,14},{0,13},{0,12},{0,11},{0,7},{0,6},{0,5}}},
 {"d2",{{14521,72},{9099,15},{7528,17},{7104,13},{4147,11},{3057,1},{1378,9},{1031,105},{971,130},{909,111},{845,113},{820,19},{777,181},{772,7},{657,177},{558,81},{391,171},{385,67},{348,158},{284,75},{278,89},{277,163},{248,21},{214,161},{212,149},{210,151},{210,23},{210,3},{183,104},{156,175},{154,33},{153,201},{143,153},{143,115},{139,66},{134,152},{134,69},{131,225},{123,135},{120,109},{117,157},{111,156},{111,20},{110,97},{110,73},{109,150},{101,10},{94,91},{91,87},{90,25},{87,147},{86,12},{83,99},{76,16},{74,155},{73,162},{72,112},{66,154},{65,107},{64,80},{60,102},{59,179},{59,169},{55,98},{53,2},{49,121},{49,18},{48,47},{45,5},{43,8},{42,117},{42,65},{41,100},{41,27},{40,160},{38,197},{38,183},{37,229},{36,148},{35,88},{35,68},{34,217},{33,131},{33,37},{32,170},{30,138},{30,14},{29,176},{29,145},{29,143},{29,103},{29,74},{28,173},{28,137},{28,95},{28,94},{27,219},{27,185},{26,178},{25,247},{25,203},{25,172},{24,254},{24,244},{23,222},{23,32},{22,159},{22,55},{22,0},{21,233},{21,174},{21,79},{21,77},{21,26},{21,24},{20,180},{20,110},{20,85},{19,192},{19,167},{19,141},{19,76},{18,235},{17,191},{17,122},{17,71},{17,31},{16,255},{16,83},{15,246},{15,168},{15,132},{15,119},{14,35},{13,251},{13,242},{13,195},{13,165},{13,30},{13,4},{12,230},{12,215},{12,133},{12,114},{12,70},{11,241},{11,227},{11,127},{11,108},{11,22},{10,128},{10,124},{10,123},{10,101},{10,51},{10,34},{10,29},{9,231},{9,182},{9,126},{9,106},{9,38},{8,249},{8,248},{8,220},{8,142},{8,118},{8,64},{8,57},{8,53},{8,28},{7,236},{7,234},{7,208},{7,205},{7,193},{7,129},{7,120},{6,213},{6,202},{6,92},{6,78},{5,252},{5,243},{5,223},{5,212},{5,204},{5,200},{5,166},{5,139},{5,58},{5,56},{5,40},{4,245},{4,221},{4,216},{4,214},{4,209},{4,199},{4,194},{4,189},{4,86},{4,50},{4,46},{4,44},{4,6},{3,226},{3,210},{3,116},{3,96},{3,82},{3,61},{3,60},{3,48},{3,42},{3,39},{2,253},{2,238},{2,224},{2,196},{2,190},{2,187},{2,146},{2,144},{2,140},{2,136},{2,90},{2,84},{2,49},{2,45},{2,36},{1,250},{1,240},{1,232},{1,228},{1,218},{1,211},{1,206},{1,198},{1,184},{1,164},{1,134},{1,93},{1,62},{1,59},{1,54},{1,52},{0,239},{0,237},{0,207},{0,188},{0,186},{0,125},{0,63},{0,43},{0,41}}},
 {"ordinary_first_byte",{{26346,0},{1641,190},{1232,32},{1139,12},{1032,114},{846,192},{787,82},{756,64},{711,189},{685,104},{650,1},{611,16},{571,72},{516,185},{511,224},{509,80},{497,201},{475,160},{469,167},{407,223},{391,166},{356,4},{353,191},{334,128},{322,184},{288,102},{274,86},{236,83},{227,136},{203,98},{203,13},{191,115},{189,15},{187,14},{186,67},{182,52},{165,188},{164,66},{156,100},{133,117},{130,118},{126,23},{125,130},{125,108},{115,96},{107,134},{106,135},{104,68},{103,124},{102,119},{97,116},{86,17},{85,221},{85,112},{77,125},{75,255},{75,127},{74,126},{60,8},{59,113},{57,122},{57,120},{53,176},{50,144},{49,84},{49,65},{48,59},{45,194},{44,20},{43,142},{42,5},{41,123},{39,101},{37,121},{35,237},{35,97},{35,49},{31,161},{31,88},{30,212},{30,208},{30,74},{29,155},{27,70},{26,219},{26,3},{25,178},{25,129},{25,48},{23,204},{23,6},{22,248},{22,81},{21,200},{20,175},{20,110},{20,18},{18,207},{18,109},{17,202},{17,62},{17,37},{16,209},{16,187},{16,183},{15,247},{15,173},{15,105},{15,71},{15,19},{14,249},{14,241},{14,195},{14,180},{14,163},{14,69},{13,242},{13,39},{12,169},{12,168},{12,151},{12,143},{12,73},{12,33},{11,228},{11,186},{11,162},{11,99},{10,196},{10,179},{10,95},{10,50},{9,41},{9,22},{8,227},{8,217},{8,147},{8,51},{7,240},{7,222},{7,182},{7,164},{7,106},{7,87},{7,24},{7,7},{6,216},{6,165},{6,140},{6,60},{6,56},{6,10},{5,244},{5,198},{5,181},{5,139},{5,46},{5,44},{5,2},{4,250},{4,234},{4,213},{4,206},{4,205},{4,203},{4,152},{4,138},{4,111},{4,103},{4,85},{4,76},{4,9},{3,253},{3,220},{3,211},{3,210},{3,172},{3,158},{3,157},{3,107},{3,94},{3,89},{3,79},{3,75},{3,53},{3,35},{2,254},{2,252},{2,215},{2,174},{2,159},{2,154},{2,146},{2,141},{2,90},{2,54},{2,47},{1,243},{1,239},{1,235},{1,233},{1,226},{1,177},{1,170},{1,156},{1,149},{1,133},{1,132},{1,91},{1,78},{1,77},{1,63},{1,57},{1,28},{1,21},{0,251},{0,246},{0,245},{0,238},{0,236},{0,232},{0,231},{0,230},{0,229},{0,225},{0,218},{0,214},{0,199},{0,197},{0,193},{0,171},{0,153},{0,150},{0,148},{0,145},{0,137},{0,131},{0,93},{0,92},{0,61},{0,58},{0,55},{0,45},{0,43},{0,42},{0,40},{0,38},{0,36},{0,34},{0,31},{0,30},{0,29},{0,27},{0,26},{0,25},{0,11}}},
-{"special_cell_type",{{14507,1},{84,2},{25,4},{6,3},{0,255},{0,254},{0,253},{0,252},{0,251},{0,250},{0,249},{0,248},{0,247},{0,246},{0,245},{0,244},{0,243},{0,242},{0,241},{0,240},{0,239},{0,238},{0,237},{0,236},{0,235},{0,234},{0,233},{0,232},{0,231},{0,230},{0,229},{0,228},{0,227},{0,226},{0,225},{0,224},{0,223},{0,222},{0,221},{0,220},{0,219},{0,218},{0,217},{0,216},{0,215},{0,214},{0,213},{0,212},{0,211},{0,210},{0,209},{0,208},{0,207},{0,206},{0,205},{0,204},{0,203},{0,202},{0,201},{0,200},{0,199},{0,198},{0,197},{0,196},{0,195},{0,194},{0,193},{0,192},{0,191},{0,190},{0,189},{0,188},{0,187},{0,186},{0,185},{0,184},{0,183},{0,182},{0,181},{0,180},{0,179},{0,178},{0,177},{0,176},{0,175},{0,174},{0,173},{0,172},{0,171},{0,170},{0,169},{0,168},{0,167},{0,166},{0,165},{0,164},{0,163},{0,162},{0,161},{0,160},{0,159},{0,158},{0,157},{0,156},{0,155},{0,154},{0,153},{0,152},{0,151},{0,150},{0,149},{0,148},{0,147},{0,146},{0,145},{0,144},{0,143},{0,142},{0,141},{0,140},{0,139},{0,138},{0,137},{0,136},{0,135},{0,134},{0,133},{0,132},{0,131},{0,130},{0,129},{0,128},{0,127},{0,126},{0,125},{0,124},{0,123},{0,122},{0,121},{0,120},{0,119},{0,118},{0,117},{0,116},{0,115},{0,114},{0,113},{0,112},{0,111},{0,110},{0,109},{0,108},{0,107},{0,106},{0,105},{0,104},{0,103},{0,102},{0,101},{0,100},{0,99},{0,98},{0,97},{0,96},{0,95},{0,94},{0,93},{0,92},{0,91},{0,90},{0,89},{0,88},{0,87},{0,86},{0,85},{0,84},{0,83},{0,82},{0,81},{0,80},{0,79},{0,78},{0,77},{0,76},{0,75},{0,74},{0,73},{0,72},{0,71},{0,70},{0,69},{0,68},{0,67},{0,66},{0,65},{0,64},{0,63},{0,62},{0,61},{0,60},{0,59},{0,58},{0,57},{0,56},{0,55},{0,54},{0,53},{0,52},{0,51},{0,50},{0,49},{0,48},{0,47},{0,46},{0,45},{0,44},{0,43},{0,42},{0,41},{0,40},{0,39},{0,38},{0,37},{0,36},{0,35},{0,34},{0,33},{0,32},{0,31},{0,30},{0,29},{0,28},{0,27},{0,26},{0,25},{0,24},{0,23},{0,22},{0,21},{0,20},{0,19},{0,18},{0,17},{0,16},{0,15},{0,14},{0,13},{0,12},{0,11},{0,10},{0,9},{0,8},{0,7},{0,6},{0,5},{0,0}}},
+{"special_cell_type",{{14507,1},{84,2},{25,4},{6,3}}},
 };
 
 
@@ -631,7 +631,8 @@ namespace settings {
     D1,
     D2,
     SPECIAL_CELL_TYPE,
-    CELL_REFS,
+    FIRST_CELL_REF,
+    OTHER_CELL_REFS,
     FLUSH_BYTE,
     ORDINARY_FIRST_BYTE,
     PRUNNED_BRANCH_DEPTHS,
@@ -645,10 +646,12 @@ namespace settings {
 
   using slice_transforms = std::vector<std::shared_ptr<compression::SliceTransform>>;
 
+  static const auto deflate_compressor = std::make_shared<compression::STDCompressor>(compression::FinalCompression::DEFLATE);
+
   static const std::vector<std::tuple<slice_transforms, cell_field_groups, std::string>> save_data_order = {
     {
       {
-        std::make_shared<compression::STDCompressor>(compression::FinalCompression::DEFLATE),
+        deflate_compressor,
       },
       {
         {cell_data_order::D1,cell_data_order::D2,cell_data_order::SPECIAL_CELL_TYPE,cell_data_order::ORDINARY_FIRST_BYTE,cell_data_order::FLUSH_BYTE,},
@@ -657,10 +660,19 @@ namespace settings {
     },
     {
       {
-        std::make_shared<compression::STDCompressor>(compression::FinalCompression::DEFLATE),
+        // deflate_compressor
       },
       {
-        {cell_data_order::CELL_REFS,},
+        {cell_data_order::FIRST_CELL_REF},
+        {cell_data_order::OTHER_CELL_REFS},
+      },
+      "cell_refs"
+    },
+    {
+      {
+        deflate_compressor,
+      },
+      {
         {cell_data_order::SORT_CELLS_BY_META,},
         {cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
         {cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
@@ -765,7 +777,6 @@ class CustomBagOfCells {
   CustomBagOfCells() = default;
   std::size_t estimate_serialized_size();
   td::Result<td::BufferSlice> serialize_to_slice();
-  td::Result<std::size_t> serialize_to(unsigned char* buffer, std::size_t buff_size);
   template <typename WriterT>
   td::Result<std::size_t> serialize_to_impl(WriterT& writer);
 
@@ -962,28 +973,35 @@ struct LoadCellData {
   }
 
   template<class Writer>
-  td::Status store_ref_diffs(BitWriter<Writer>& bwriter, int from) {
-    auto ref_diffs = ref_idx;
-    for (int i = int(ref_diffs.size()) - 1; i >= 0; --i) {
-      ref_diffs[i] -= from + 1;
+  td::Status store_first_ref_diff(BitWriter<Writer>& bwriter, int from) {
+    if (refs_cnt > 0) {
+      int first_ref_diff = ref_idx[0] - (from + 1);
+      add_int("first_ref_diff", first_ref_diff);
+      huffman::ref_diff.write(bwriter, first_ref_diff);
     }
-    dbg(ref_diffs);
-    for (auto ref : ref_idx) {
-      int ref_diff = ref - (from + 1);
-      add_int("ref_diff", ref_diff);
-      huffman::ref_diff.write(bwriter, ref_diff);
-      // store_ref(ref_diff);
-    }
-    DBG(log_level::LOG_LEVEL::SKIP, ref_idx);
     return td::Status::OK();
   }
-  td::Status load_ref_diffs(BitReader& breader, int from) {
-    DBG(log_level::CELL_META, refs_cnt);
+  td::Status load_first_ref_diff(BitReader& breader, int from) {
     ref_idx.resize(refs_cnt);
-    for (auto &ref : ref_idx) {
-      // diff = breader.read_bits(info.ref_bit_size);
-      auto ref_diff = huffman::ref_diff.read(breader);
-      ref = ref_diff + (from + 1);
+    if (refs_cnt > 0) {
+      ref_idx[0] = huffman::ref_diff.read(breader) + (from + 1);
+    }
+    return td::Status::OK();
+  }
+
+  template<class Writer>
+  td::Status store_other_ref_diffs(BitWriter<Writer>& bwriter, int from) {
+    for (int i = 1; i < refs_cnt; ++i) {
+      int ref_diff = ref_idx[i] - (from + 1);
+      add_int("rest_ref_diff", ref_diff);
+      huffman::ref_diff.write(bwriter, ref_diff);
+    }
+    return td::Status::OK();
+  }
+  td::Status load_other_ref_diffs(BitReader& breader, int from) {
+    ref_idx.resize(refs_cnt);
+    for (int i = 1; i < refs_cnt; ++i) {
+      ref_idx[i] = huffman::ref_diff.read(breader) + (from + 1);
     }
     return td::Status::OK();
   }
@@ -1103,6 +1121,7 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
       add_int("two_bytes", (uint16_t(buf[2]) << 8) + uint16_t(buf[3]));
     }
     auto get_cell_refs = [&]() {
+      DCHECK(dc->size_refs() == dc_info.ref_num);
       std::vector<int> refs;
       for (int j = 0; j < dc_info.ref_num; ++j) {
         int ref = cell_count - 1 - dc_info.ref_idx[j];
@@ -1200,9 +1219,12 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
               TRY_STATUS(cell_info[i].store_prunned_branch_depths(buffer_bwriter));
               break;
             }
-            case settings::cell_data_order::CELL_REFS: {
-              DCHECK(dc->size_refs() == dc_info.ref_num);
-              TRY_STATUS(cell_info[i].store_ref_diffs(buffer_bwriter, i));
+            case settings::cell_data_order::FIRST_CELL_REF: {
+              TRY_STATUS(cell_info[i].store_first_ref_diff(buffer_bwriter, i));
+              break;
+            }
+            case settings::cell_data_order::OTHER_CELL_REFS: {
+              TRY_STATUS(cell_info[i].store_other_ref_diffs(buffer_bwriter, i));
               break;
             }
             default:
@@ -1246,20 +1268,17 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 
   }
 
-
   bwriter.flush_byte(); // It's important to write the last byte, otherwise it will stay in the buffer
   writer.chk();
   DBG(log_level::COMPRESSION_META, writer.position());
   return writer.position();
 }
 
-// Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 td::uint64 CustomBagOfCells::compute_sizes() {
   td::uint64 data_bytes_adj = cell_count * 3 + data_bytes + (unsigned long long)int_refs * 4;
   return data_bytes_adj;
 }
 
-// Changes in this function may require corresponding changes in crypto/vm/large-boc-serializer.cpp
 std::size_t CustomBagOfCells::estimate_serialized_size() {
   auto data_bytes_adj = compute_sizes();
   if (!data_bytes_adj) {
@@ -1277,26 +1296,19 @@ std::size_t CustomBagOfCells::estimate_serialized_size() {
   return res.ok() + 1;
 }
 
-td::Result<std::size_t> CustomBagOfCells::serialize_to(unsigned char* buffer, std::size_t buff_size) {
-  boc_writers::BufferWriter writer{buffer, buffer + buff_size};
-  return serialize_to_impl(writer);
-}
-
 td::Result<td::BufferSlice> CustomBagOfCells::serialize_to_slice() {
   std::size_t size_est = estimate_serialized_size();
   if (!size_est) {
     return td::Status::Error("no cells to serialize to this bag of cells");
   }
-  int buff_size = 4 << 20;
+  int buff_size = 2 << 20;
   td::BufferSlice res(buff_size);
-  TRY_RESULT(size, serialize_to(get_buffer_slice_data(res), res.size()));
+  auto* buff = get_buffer_slice_data(res);
+  boc_writers::BufferWriter writer{buff, buff + buff_size};
+  TRY_RESULT(size, serialize_to_impl(writer));
   MSG(log_level::COMPRESSION_META, "Expected size = ", size_est, ", Real size = ", size);
-  if (size <= res.size()) {
-    res.truncate(size);
-    return std::move(res);
-  } else {
-    return td::Status::Error("error while serializing a bag of cells: actual serialized size differs from estimated");
-  }
+  res.truncate(size);
+  return std::move(res);
 }
 
 td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int max_roots) {
@@ -1416,9 +1428,14 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
               }
               break;
             }
-            case settings::cell_data_order::CELL_REFS: {
+            case settings::cell_data_order::FIRST_CELL_REF: {
               TRY_STATUS(cell_info.init_d1());
-              TRY_STATUS(cell_info.load_ref_diffs(buffer_breader, idx));
+              TRY_STATUS(cell_info.load_first_ref_diff(buffer_breader, idx));
+              break;
+            }
+            case settings::cell_data_order::OTHER_CELL_REFS: {
+              TRY_STATUS(cell_info.init_d1());
+              TRY_STATUS(cell_info.load_other_ref_diffs(buffer_breader, idx));
               break;
             }
             case settings::cell_data_order::PRUNNED_BRANCH_DEPTHS: {
