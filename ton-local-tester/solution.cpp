@@ -107,9 +107,9 @@ namespace log_level {
 		SKIP = 1000 // Logs, that are never written
 	};
 
-	static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ALWAYS;
+	static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ONCE;
 
-	static constexpr auto ENCODER_STAT = LOG_LEVEL::ONCE;
+	static constexpr auto ENCODER_STAT = LOG_LEVEL::SKIP;
 	static constexpr auto ENCODER_DATA = LOG_LEVEL::SKIP;
 	static constexpr auto BIT_IO = LOG_LEVEL::BIT;
 	static constexpr auto NUMBER = LOG_LEVEL::BYTE;
@@ -143,150 +143,6 @@ namespace log_level {
 uint8_t* get_buffer_slice_data(const td::BufferSlice& slice) {
 	return const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(slice.data()));
 }
-
-namespace BWT {
-
-using namespace std;
-
-template<class T>
-inline int sz(const T &x) { return x.size(); }
-#define pb push_back
-using pii = pair<int, int>;
-template<class T>
-inline void sort(T &x) { sort(all(x)); }
-
-template<class T>
-vector<int> suffixarray(T s) {
-		vector<int> val(all(s));
-		auto x = val;
-		sort(x);
-		x.resize(unique(all(x)) - x.begin());
-		for (auto &i : val)
-				i = lower_bound(all(x), i) - x.begin();
-		val.pb(-1);
-		vector<int> p(sz(val));
-		for (int i = 0; i < sz(p); ++i) p[i] = i + 1;
-		p[sz(p) - 1] = sz(p) - 1;
-		int lg = 0;
-		vector<int> ans(sz(s));
-		for (int i = 0; i < sz(ans); ++i) ans[i] = i;
-		sort(all(ans), [&](int i, int j) {
-				return val[i] < val[j];
-		});
-		while ((1 << lg) < sz(val)) {
-				++lg;
-				int past = 0;
-				for (int i = 0; i < sz(ans); ++i)
-						if (val[ans[i]] != val[ans[past]]) {
-								sort(ans.begin() + past, ans.begin() + i, [&](int i, int j) {
-										return pii(val[i], val[p[i]]) < pii(val[j], val[p[j]]);
-								});
-								past = i;
-						}
-				sort(ans.begin() + past, ans.end(), [&](int i, int j) {
-						return pii(val[i], val[p[i]]) < pii(val[j], val[p[j]]);
-				});
-				vector<pii> coord;
-				for (auto i : ans) coord.pb({val[i], val[p[i]]});
-				coord.resize(unique(all(coord)) - coord.begin());
-				int ptr = 0;
-				vector<int> newval(sz(ans));
-				newval.pb(-1);
-				for (auto i : ans) {
-						while (coord[ptr] < pii(val[i], val[p[i]])) ++ptr;
-						newval[i] = ptr;
-				}
-				val = newval;
-				for (int i = 0; i < sz(p); ++i)
-						p[i] = p[p[i]];
-		}
-		return ans;
-}
-
-using data_type = int;
-using byte_buffer = std::vector<data_type>;
-static constexpr data_type SPECIAL_SYMBOL = -1;
-
-byte_buffer to_byte_buffer(const td::Slice &data) {
-	BWT::byte_buffer answer;
-	for (auto i : data) {
-		answer.push_back(uint16_t(uint8_t(i)));
-	}
-	return std::move(answer);
-}
-
-td::BufferSlice from_byte_buffer(byte_buffer data) {
-	td::BufferSlice ans(data.size());
-	auto buffer = get_buffer_slice_data(ans);
-	vm::boc_writers::BufferWriter writer{buffer, buffer + data.size()};
-	for (auto i : data) {
-		writer.store_uint(i, 1);
-	}
-	return std::move(ans);
-}
-
-// Function to perform Burrows-Wheeler Transform
-std::pair<byte_buffer, int> bwt(const byte_buffer &input) {
-		size_t n = input.size();
-		byte_buffer modified_input = input;
-
-		// Append a fictive special symbol (e.g., 0)
-		modified_input.push_back(SPECIAL_SYMBOL); // Null byte as special symbol
-
-		size_t modified_n = modified_input.size();
-
-		auto sa = suffixarray(modified_input);
-
-		// Build the BWT output and find the special symbol position
-		byte_buffer bwt_output(modified_n); // Exclude the special symbol from the output
-		size_t special_symbol_pos = 0;
-
-		for (size_t i = 0; i < modified_n; ++i) {
-				data_type value = modified_input[(sa[i] + modified_n - 1) % modified_n];
-				if (value == SPECIAL_SYMBOL) { // Check for the special symbol
-						special_symbol_pos = i;
-				}
-				bwt_output[i] = value;
-		}
-
-		bwt_output.erase(bwt_output.begin() + special_symbol_pos);
-
-		return {bwt_output, special_symbol_pos};
-}
-
-// Function to perform Inverse Burrows-Wheeler Transform
-byte_buffer inverse_bwt(byte_buffer bwt_input, size_t special_symbol_pos) {
-		bwt_input.insert(bwt_input.begin() + special_symbol_pos, SPECIAL_SYMBOL);
-		size_t n = bwt_input.size();
-		std::vector<std::pair<data_type, size_t>> sorted_pairs(n);
-		
-		// Create pairs of (character, original index)
-		for (size_t i = 0; i < n; ++i) {
-				sorted_pairs[i] = {bwt_input[i], i};
-		}
-
-		// Sort pairs by character
-		std::sort(all(sorted_pairs));
-
-		// Build the first column of the table
-		std::vector<uint8_t> first_col(n);
-		for (size_t i = 0; i < n; ++i) {
-				first_col[i] = sorted_pairs[i].first;
-		}
-
-		// Reconstruct the original string using the last column and the sorted pairs
-		byte_buffer original(n);
-		size_t current_index = special_symbol_pos;
-
-		for (size_t i = 0; i < n; ++i) {
-				original[i] = bwt_input[current_index];
-				current_index = sorted_pairs[current_index].second;
-		}
-
-		return {original.begin() + 1, original.end()};
-}
-
-} // namespace BWT
 
 template<class Writer>
 struct BitWriter {
@@ -520,6 +376,7 @@ static const std::map<std::string, distribution_data> huffman_data = {
 {"ref_perm_2",{{28357,12},{7706,21}}},
 {"ref_perm_3",{{1523,123},{240,312},{38,231},{37,213},{29,132},{0,321}}},
 {"ref_perm_4",{{74,1234},{14,4123},{7,2341},{4,1342},{4,1243},{3,4231},{3,3421},{3,3412},{3,1423},{3,1324},{2,4132},{1,1432},{0,4321},{0,4312},{0,4213},{0,3241},{0,3214},{0,3142},{0,3124},{0,2431},{0,2413},{0,2314},{0,2143},{0,2134}}},
+{"ordinary_second_byte_0",{{3537,192},{2702,0},{2453,160},{1902,224},{1360,193},{796,161},{794,194},{569,162},{564,128},{492,225},{430,195},{406,226},{367,129},{362,196},{354,163},{302,198},{270,164},{265,165},{264,227},{262,130},{258,228},{250,197},{245,131},{194,132},{169,229},{166,202},{160,167},{156,170},{155,166},{152,135},{145,168},{139,134},{138,199},{137,136},{134,133},{128,201},{126,203},{122,172},{121,171},{120,175},{118,200},{113,137},{111,169},{111,138},{103,178},{100,232},{99,140},{97,142},{96,205},{92,204},{90,206},{90,177},{87,208},{85,141},{83,173},{82,209},{80,174},{80,144},{76,176},{73,145},{72,214},{72,180},{71,139},{70,207},{66,186},{66,146},{64,212},{64,210},{64,152},{63,153},{62,179},{60,183},{58,143},{57,147},{55,148},{54,149},{52,234},{52,184},{51,185},{47,191},{46,231},{46,211},{46,156},{45,154},{44,233},{44,230},{44,221},{44,218},{44,213},{44,190},{43,188},{43,150},{42,216},{42,182},{41,189},{41,155},{40,215},{40,151},{40,16},{38,157},{36,181},{36,159},{34,238},{34,187},{30,219},{30,158},{26,247},{26,220},{26,217},{24,248},{24,243},{22,249},{22,246},{22,237},{22,222},{20,245},{20,240},{20,223},{18,250},{18,239},{18,235},{16,242},{15,244},{14,254},{12,236},{10,251},{10,124},{10,1},{8,255},{8,252},{8,241},{8,126},{6,125},{6,110},{6,96},{5,120},{4,119},{4,116},{4,109},{4,2},{3,121},{3,107},{3,103},{3,97},{3,83},{3,8},{3,3},{2,253},{2,115},{2,111},{2,104},{2,101},{2,98},{2,67},{2,64},{2,57},{2,28},{2,5},{1,127},{1,122},{1,114},{1,108},{1,100},{1,93},{1,78},{1,32},{0,123},{0,118},{0,117},{0,113},{0,112},{0,106},{0,105},{0,102},{0,99},{0,95},{0,94},{0,92},{0,91},{0,90},{0,89},{0,88},{0,87},{0,86},{0,85},{0,84},{0,82},{0,81},{0,80},{0,79},{0,77},{0,76},{0,75},{0,74},{0,73},{0,72},{0,71},{0,70},{0,69},{0,68},{0,66},{0,65},{0,63},{0,62},{0,61},{0,60},{0,59},{0,58},{0,56},{0,55},{0,54},{0,53},{0,52},{0,51},{0,50},{0,49},{0,48},{0,47},{0,46},{0,45},{0,44},{0,43},{0,42},{0,41},{0,40},{0,39},{0,38},{0,37},{0,36},{0,35},{0,34},{0,33},{0,31},{0,30},{0,29},{0,27},{0,26},{0,25},{0,24},{0,23},{0,22},{0,21},{0,20},{0,19},{0,18},{0,17},{0,15},{0,14},{0,13},{0,12},{0,11},{0,10},{0,9},{0,7},{0,6},{0,4}}},
 };
 
 #define REG_ENCODER(name) static const HuffmanEncoder name(huffman_data.at(#name), #name)
@@ -531,6 +388,7 @@ REG_ENCODER(ordinary_first_byte);
 REG_ENCODER(ref_perm_2);
 REG_ENCODER(ref_perm_3);
 REG_ENCODER(ref_perm_4);
+REG_ENCODER(ordinary_second_byte_0);
 
 static const std::map<int, const HuffmanEncoder&> ref_perm = {{2,ref_perm_2},{3,ref_perm_3},{4,ref_perm_4}};
 
@@ -547,14 +405,15 @@ void init_ref_diff(int cell_count) {
 	ref_diff = HuffmanEncoder(ref_diff_data, "ref_diff");
 
 	distribution_data first_ref_diff_data = {{22818,0},{11509,1},{1591,2}};
-	for (int x = 3; x <= cell_count; ++x) {
-		first_ref_diff_data.push_back({(2500) / x, x});
+	for (int x = 3; x < cell_count; ++x) {
+		first_ref_diff_data.push_back({(2000) / x, x});
 	}
 	first_ref_diff = HuffmanEncoder(first_ref_diff_data, "first_ref_diff");
 
-	distribution_data rest_ref_diff_data = {{9602,2},{8605,1},{1254,3},{0, 0}};
-	for (int x = 4; x <= cell_count; ++x) {
-		rest_ref_diff_data.push_back({(3500) / x, x});
+	distribution_data rest_ref_diff_data = {{23195,1},{538,2},{0, 0}};
+	// distribution_data rest_ref_diff_data = {{9602,2},{8605,1},{1254,3}};
+	for (int x = 3; x < cell_count; ++x) {
+		rest_ref_diff_data.push_back({(0) / x, x});
 	}
 	rest_ref_diff = HuffmanEncoder(rest_ref_diff_data, "rest_ref_diff");
 
@@ -569,7 +428,7 @@ void init_prunned_depth() {
 	}
 	distribution_data prunned_depth_data;
 	for (int i = 0; i < cnt.size(); ++i) {
-		prunned_depth_data.pb({cnt[i], i});
+		prunned_depth_data.push_back({cnt[i], i});
 	}
 	prunned_depth = HuffmanEncoder(prunned_depth_data, "prunned_depth");
 }
@@ -619,30 +478,9 @@ struct STDCompressor : public SliceTransform {
 	}
 };
 
-struct BWTTransform : public SliceTransform {
-	virtual td::BufferSlice apply_transform(td::Slice data) override {
-		auto [bwt_result, special_symbol_pos] = BWT::bwt(BWT::to_byte_buffer(data));
-		BWT::byte_buffer special_sumbol_bytes = {
-			special_symbol_pos & 255,
-			special_symbol_pos >> 8 & 255,
-			special_symbol_pos >> 16 & 255
-		};
-		bwt_result.insert(bwt_result.begin(), special_sumbol_bytes.begin(), special_sumbol_bytes.end());
-		return std::move(BWT::from_byte_buffer(bwt_result));
-	}
-	virtual td::BufferSlice revert_transform(td::Slice data) override {
-		auto ptr = data.ubegin();
-		int special_symbol_pos = (int(ptr[0]) << 0) + (int(ptr[1]) << 8) + (int(ptr[2]) << 16);
-		data.remove_prefix(3);
-		auto inverse_bwt = BWT::inverse_bwt(BWT::to_byte_buffer(data), special_symbol_pos);
-		return std::move(BWT::from_byte_buffer(inverse_bwt));
-	}
-};
-
 } // namespace compression
 
 namespace settings {
-	bool use_bwt = false;
 	constexpr int PRUNNED_BRANCH_TYPE = 1;
 	enum class cell_data_order {
 		D1,
@@ -679,23 +517,16 @@ namespace settings {
 		},
 		{
 			{
-				deflate_compressor
-			},
-			{
-				{cell_data_order::SORT_CELLS_BY_META,},
-				{cell_data_order::REF_PERM,},
-				{cell_data_order::FIRST_CELL_REF},
-				{cell_data_order::OTHER_CELL_REFS},
-			},
-			"cell_refs"
-		},
-		{
-			{
 				deflate_compressor,
 			},
 			{
-				{cell_data_order::FLUSH_BYTE,cell_data_order::ORDINARY_CELL_DATA,cell_data_order::FLUSH_BYTE},
-				{cell_data_order::FLUSH_BYTE, cell_data_order::OTHER_SPECIAL_CELLS_DATA, cell_data_order::FLUSH_BYTE},
+				{cell_data_order::SORT_CELLS_BY_META,},
+				{cell_data_order::FLUSH_BYTE},
+				{cell_data_order::ORDINARY_CELL_DATA},
+				{cell_data_order::OTHER_SPECIAL_CELLS_DATA},
+				{cell_data_order::REF_PERM,},
+				{cell_data_order::FIRST_CELL_REF},
+				{cell_data_order::OTHER_CELL_REFS},
 				{cell_data_order::PRUNNED_BRANCH_DEPTHS,},
 			},
 			"cell_data"
@@ -705,7 +536,7 @@ namespace settings {
 				// Leave this block as is, since it contains totally random data (hashes)
 			},
 			{
-				{cell_data_order::FLUSH_BYTE,cell_data_order::PRUNNED_BRANCH_DATA,cell_data_order::FLUSH_BYTE},
+				{cell_data_order::PRUNNED_BRANCH_DATA,},
 			},
 			"prunned_branch_data"
 		}
@@ -1053,7 +884,7 @@ struct LoadCellData {
 	template<class Writer>
 	td::Status store_other_ref_diffs(BitWriter<Writer>& bwriter, int from) {
 		for (int i = 1; i < refs_cnt; ++i) {
-			int ref_diff = ref_idx[i] - (from + 1);
+			int ref_diff = ref_idx[i] - ref_idx[i - 1];
 			add_int("rest_ref_diff", ref_diff);
 			huffman::rest_ref_diff.write(bwriter, ref_diff);
 		}
@@ -1062,7 +893,7 @@ struct LoadCellData {
 	td::Status load_other_ref_diffs(BitReader& breader, int from) {
 		ref_idx.resize(refs_cnt);
 		for (int i = 1; i < refs_cnt; ++i) {
-			ref_idx[i] = huffman::rest_ref_diff.read(breader) + (from + 1);
+			ref_idx[i] = huffman::rest_ref_diff.read(breader) + ref_idx[i - 1];
 		}
 		return td::Status::OK();
 	}
@@ -1072,6 +903,9 @@ struct LoadCellData {
 		TRY_STATUS(init_offsets());
 		for (int i = uncompressed_data_offset; i < uncompressed_data_offset + uncompressed_data_len; ++i) {
 			MSG(log_level::LOG_LEVEL::BYTE, "Writing data ", uint16_t(data[i]));
+			if (!special) {
+				add_char("ordinary_data", data[i]);
+			}
 			bwriter.write_bits(data[i], 8);
 		}
 		return td::Status::OK();
@@ -1102,6 +936,9 @@ struct LoadCellData {
 		if (level_mask.get_mask() != other.level_mask.get_mask()) {
 			return level_mask.get_mask() < other.level_mask.get_mask() ? -1 : 1;
 		}
+		// if (special != other.special) {
+		// 	return special < other.special ? -1 : 1;
+		// }
 		if (refs_cnt != other.refs_cnt) {
 			return refs_cnt < other.refs_cnt ? -1 : 1;
 		}
@@ -1111,9 +948,9 @@ struct LoadCellData {
 		if (ordinary_first_byte != other.ordinary_first_byte) {
 			return ordinary_first_byte < other.ordinary_first_byte ? -1 : 1;
 		}
-		if (special_cell_type != other.special_cell_type) {
-			return special_cell_type < other.special_cell_type ? -1 : 1;
-		}
+		// if (special_cell_type != other.special_cell_type) {
+		// 	return special_cell_type < other.special_cell_type ? -1 : 1;
+		// }
 		// auto check_prunned_branches = compare_prunned_branches(other);
 		// if (check_prunned_branches != 0) return check_prunned_branches;
 		// if (ref_diffs != other.ref_diffs) {
@@ -1251,9 +1088,13 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 							break;
 						}
 						case settings::cell_data_order::ORDINARY_FIRST_BYTE: {
-							if (!cell_info[i].special && cell_info[i].full_data_len > 0) {
+							if (!cell_info[i].special && cell_info[i].full_data_len >= 1) {
 								auto first_byte = cell_info[i].ordinary_first_byte;
 								add_char("ordinary_first_byte", first_byte);
+								static const std::set<int> interesting = {0, 190, 32, 12, 114, 192};
+								if (interesting.count(first_byte) && cell_info[i].full_data_len >= 2) {
+									add_char("ordinary_second_byte_" + std::to_string(first_byte), cell_info[i].data[1]);
+								}
 								huffman::ordinary_first_byte.write(buffer_bwriter, first_byte);
 							}
 							break;
@@ -1327,7 +1168,11 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 
 		MSG(log_level::COMPRESSION_META, name, ": Written bytes = ", written_bytes, ", transformed = ", saved_data.size(), ", CR = ", written_bytes * 1.0 / saved_data.size());
 
-		bwriter.write_bits(saved_data.size(), 24);
+		if (name == std::get<2>(settings::save_data_order.back())) {
+			// Do not write size if it's the last block
+		} else {
+			bwriter.write_bits(saved_data.size(), 24);
+		}
 		for (int i = 0; i < saved_data.size(); ++i) {
 			bwriter.write_bits(uint8_t(saved_data[i]), 8);
 		}
@@ -1407,9 +1252,15 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
 	td::BufferSlice buffer;
 
 	for (const auto& [transforms, stored_groups_of_fields, name] : settings::save_data_order) {
+		breader.flush_byte();
 		MSG(log_level::COMPRESSION_META, "Start reading block ", name);
 
-		int data_len = breader.read_bits(24);
+		int data_len = -1;
+		if (name == std::get<2>(settings::save_data_order.back())) {
+			data_len = data.size() - breader.get_ptr();
+		} else {
+			data_len = breader.read_bits(24);
+		}
 
 		buffer = td::BufferSlice(data_len);
 
@@ -1458,7 +1309,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
 							TRY_STATUS(cell_info.init_d1());
 							if (cell_info.special) {
 								auto special_cell_type = huffman::special_cell_type.read(buffer_breader);
-								cell_info.set_special_cell_type(special_cell_type);
+								cell_info.special_cell_type = special_cell_type;
 							}
 							break;
 						}
@@ -1466,7 +1317,7 @@ td::Result<long long> CustomBagOfCells::deserialize(const td::Slice& data, int m
 							TRY_STATUS(cell_info.init());
 							if (!cell_info.special && cell_info.full_data_len > 0) {
 								int ordinary_first_byte = huffman::ordinary_first_byte.read(buffer_breader);
-								cell_info.set_ordinary_first_byte(ordinary_first_byte);
+								cell_info.ordinary_first_byte = ordinary_first_byte;
 							}
 							break;
 						}
