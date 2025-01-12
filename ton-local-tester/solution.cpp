@@ -1209,7 +1209,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     buffer_bwriter.flush_byte();
     auto written_bytes = buffer_writer.position();
     if (written_bytes == 0) continue;
-    DBG(log_level::COMPRESSION_META, written_bytes);
     td::BufferSlice saved_data = td::BufferSlice(reinterpret_cast<char*>(get_buffer_slice_data(buff_slice)), written_bytes);
     if (log_level::check_log_level(log_level::LOG_LEVEL::BYTE)) {
       msg("Saving slice of size ", saved_data.size());
@@ -1222,6 +1221,8 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
     for (const auto& transform : transforms) {
       saved_data = transform->apply_transform(saved_data);
     }
+
+    MSG(log_level::COMPRESSION_META, "Written bytes = ", written_bytes, ", transformed = ", saved_data.size(), ", CR = ", written_bytes * 1.0 / saved_data.size());
 
     bwriter.write_bits(saved_data.size(), 24);
     for (int i = 0; i < saved_data.size(); ++i) {
