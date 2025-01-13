@@ -107,7 +107,7 @@ namespace log_level {
 		SKIP = 1000 // Logs, that are never written
 	};
 
-	static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ONCE;
+	static constexpr enum LOG_LEVEL global_log_level = LOG_LEVEL::ALWAYS;
 
 	static constexpr auto ENCODER_STAT = LOG_LEVEL::SKIP;
 	static constexpr auto ENCODER_DATA = LOG_LEVEL::SKIP;
@@ -406,16 +406,16 @@ void init_ref_diff(int cell_count) {
 	}
 	ref_diff = HuffmanEncoder(ref_diff_data, "ref_diff");
 
-	distribution_data first_ref_diff_data = {{22818,0},{11509,1},{1591,2}};
+	distribution_data first_ref_diff_data = {{2300000,0},{1150000,1},{160000,2}};
 	for (int x = 3; x < cell_count; ++x) {
-		first_ref_diff_data.push_back({(2000) / x, x});
+		first_ref_diff_data.push_back({int(50000 / std::pow(x, 1)), x});
 	}
 	first_ref_diff = HuffmanEncoder(first_ref_diff_data, "first_ref_diff");
 
-	distribution_data rest_ref_diff_data = {{23195,1},{538,2},{0, 0}};
+	distribution_data rest_ref_diff_data = {{2300000,1},{50000,2},{23000,4},{8000,3},{3000,0}};
 	// distribution_data rest_ref_diff_data = {{9602,2},{8605,1},{1254,3}};
-	for (int x = 3; x < cell_count; ++x) {
-		rest_ref_diff_data.push_back({(0) / x, x});
+	for (int x = 5; x < cell_count; ++x) {
+		rest_ref_diff_data.push_back({int(100000 / std::pow(x, 0.5)), x});
 	}
 	rest_ref_diff = HuffmanEncoder(rest_ref_diff_data, "rest_ref_diff");
 
@@ -1107,10 +1107,6 @@ td::Result<std::size_t> CustomBagOfCells::serialize_to_impl(WriterT& writer) {
 						}
 						case settings::cell_data_order::ORDINARY_SECOND_BYTE_0: {
 							if (cell_info[i].special || cell_info[i].ordinary_first_byte != 0 || cell_info[i].full_data_len < 2) continue;
-							for (int x = 0; x < cell_info[i].data.size(); ++x) {
-								std::cerr << uint32_t(cell_info[i].data[x]) << ' ';
-							}
-							std::cerr << '\n';
 							huffman::ordinary_second_byte_0.write(buffer_bwriter, cell_info[i].ordinary_second_byte_0);
 							break;
 						}
